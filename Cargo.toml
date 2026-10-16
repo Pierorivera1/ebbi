@@ -1,0 +1,20 @@
+[package]
+name = "ebbi"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+description = "Local-first productivity desktop for Linux"
+
+[dependencies]
+iced = { version = "0.13.1", features = ["canvas", "markdown"] }
+rusqlite = { version = "0.32", features = ["bundled", "chrono", "backup"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "5"
+sha2 = "0.10"
+rfd = "0.17"
+
+[dev-dependencies]
+tempfile = "3"

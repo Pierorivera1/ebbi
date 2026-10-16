@@ -1,0 +1,16 @@
+CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE habits(id INTEGER PRIMARY KEY, name TEXT NOT NULL CHECK(length(trim(name))>0), position INTEGER NOT NULL, archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN(0,1)), created_at TEXT NOT NULL, tracked_from TEXT NOT NULL, unknown_before TEXT);
+CREATE TABLE habit_rules(habit_id INTEGER NOT NULL REFERENCES habits(id), effective_from TEXT NOT NULL, active INTEGER NOT NULL CHECK(active IN(0,1)), PRIMARY KEY(habit_id,effective_from));
+CREATE TABLE habit_entries(habit_id INTEGER NOT NULL REFERENCES habits(id), date TEXT NOT NULL, completed INTEGER NOT NULL CHECK(completed IN(0,1)), PRIMARY KEY(habit_id,date));
+CREATE TABLE tasks(id INTEGER PRIMARY KEY, title TEXT NOT NULL CHECK(length(trim(title))>0), notes TEXT NOT NULL DEFAULT '', due_date TEXT, completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN(0,1)), completed_at TEXT, created_at TEXT NOT NULL, position INTEGER NOT NULL);
+CREATE TABLE study_topics(id INTEGER PRIMARY KEY, title TEXT NOT NULL CHECK(length(trim(title))>0), notes TEXT NOT NULL, initial_date TEXT, created_at TEXT NOT NULL, status TEXT NOT NULL);
+CREATE TABLE study_reviews(id INTEGER PRIMARY KEY, topic_id INTEGER NOT NULL REFERENCES study_topics(id), review_stage INTEGER NOT NULL CHECK(review_stage BETWEEN 1 AND 3), original_due_date TEXT, scheduled_date TEXT NOT NULL, completed_at TEXT, schedule_version TEXT NOT NULL DEFAULT 'fixed-1-3-5-v1', UNIQUE(topic_id,review_stage));
+CREATE TABLE review_reschedules(id INTEGER PRIMARY KEY, review_id INTEGER NOT NULL REFERENCES study_reviews(id), previous_date TEXT NOT NULL, new_date TEXT NOT NULL, changed_at TEXT NOT NULL);
+CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+CREATE TABLE legacy_imports(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, source_path TEXT NOT NULL, fingerprint TEXT NOT NULL, imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(kind,source_path));
+CREATE TABLE legacy_rows(batch_id INTEGER NOT NULL REFERENCES legacy_imports(id), source_table TEXT NOT NULL, source_id TEXT NOT NULL, destination_id INTEGER, raw_json TEXT NOT NULL, PRIMARY KEY(batch_id,source_table,source_id));
+CREATE INDEX study_reviews_date ON study_reviews(scheduled_date);
+INSERT INTO settings(key,value) VALUES('database_id',lower(hex(randomblob(16))));
+INSERT INTO schema_migrations(version) VALUES(1);
+PRAGMA application_id=1161970249;
+PRAGMA user_version=1;
