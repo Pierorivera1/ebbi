@@ -1,78 +1,194 @@
+<div align="center">
+
 # Ebbi
 
-Ebbi is a local-first desktop app for habits, tasks, study reviews, and personal analytics. It brings daily planning and spaced repetition into one native Linux application, with private SQLite storage and no account or network service.
+**Habits, tasks, and study reviews in one native Linux app.**
 
-The interface is built with Rust and Iced for Omarchy, Wayland, and Linux desktops. The core workflows are implemented, including import and backup tools for existing Habit Tracker and Repasito data. The app is currently built from source; login startup, single-instance view routing, packaged distribution, and in-app graphical restore are planned.
+Built with Rust · Designed for daily use · Stored locally in SQLite
 
-## Build and run
+![Rust](https://img.shields.io/badge/Rust-1.89%2B-DEA584?logo=rust&logoColor=white)
+![UI](https://img.shields.io/badge/UI-Iced_0.13-6C8EBF)
+![Database](https://img.shields.io/badge/Storage-SQLite-003B57?logo=sqlite&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black)
 
-Requires Rust 1.89 or newer and a working Linux graphical session. On Arch, the usual Iced runtime libraries include `libxkbcommon`, Wayland and a working graphics driver; a desktop portal is needed for the optional file chooser. No account or server is required. If the chooser is unavailable, type the database path in Settings.
+[Features](#features) · [Getting started](#getting-started) · [Architecture](#architecture) · [User guide](docs/usage.md)
+
+</div>
+
+![Ebbi dashboard showing daily habits, numeric progress, tasks, and a study review summary](docs/screenshots/dashboard.png)
+
+## Overview
+
+Ebbi brings recurring habits, everyday tasks, and spaced repetition into a single desktop application. Check in on a habit, record minutes spent studying, work through a review agenda, and see how your consistency changes over time.
+
+The project combines the workflows of [Habit Tracker](https://github.com/Pierorivera1/Habit_Tracker) and [Repasito](https://github.com/Pierorivera1/Repasito) in a Rust application. Its engineering focus is straightforward: keep the interface responsive, preserve historical meaning, and make database failures visible. Core functionality works offline, without an account, server, or background service.
+
+## Features
+
+- **Daily dashboard:** binary and numeric habits, historical check-ins, task editing and reordering, and a summary of due study reviews. Columns stack on narrow windows.
+- **Numeric goals:** minimum, maximum, and inclusive-range targets with named units. Goal changes take effect on a future date so earlier entries retain their original interpretation.
+- **Study agenda:** searchable topics with Markdown notes, a seven-day date strip, overdue reviews, and independent review completion. Reviews follow fixed offsets of **1, 3, and 5 days** from the study date.
+- **Useful analytics:** 7/30/90-day trends, consistency, current and longest streaks, numeric values against targets, complete-period comparisons, and study completion and on-time metrics.
+- **History preservation:** archiving retains habit records; rescheduling preserves original review deadlines and records the change. Missing values and unknown legacy dates remain distinct from zero or failure.
+- **Local data tools:** previewed imports from Habit Tracker and Repasito, transactional schema migrations, verified backups, and explicit storage errors.
+- **Keyboard navigation:** view shortcuts, row selection, date navigation, and form controls alongside mouse interactions.
+
+## Screenshots
+
+Captured from the native app on Omarchy / Wayland. All names, tasks, and history shown here are synthetic demonstration data.
+
+### Study agenda
+
+A compact review list groups overdue, upcoming, and completed work. Search and date filtering can be used independently.
+
+![Ebbi Study view with grouped review rows, a seven-day strip, search, and overdue indicators](docs/screenshots/study.png)
+
+### Analytics
+
+Calendar-aligned trends and per-habit statistics show the recorded history. Dates without eligible opportunities are reported as N/A.
+
+![Ebbi Analytics view showing daily completion trends, consistency and streak statistics](docs/screenshots/analytics.png)
+
+## Getting started
+
+### Requirements
+
+- Rust **1.89 or newer** and Cargo.
+- A Linux graphical session and working graphics driver. Native UI checks were performed on Omarchy / Wayland.
+- The usual Iced Linux libraries, including `libxkbcommon` and Wayland support. A desktop portal enables the optional file chooser; typed paths are also supported.
+
+SQLite is bundled through `rusqlite`; a separate database server is unnecessary.
+
+### Build from source
 
 ```sh
-cargo run --locked
-cargo run --locked -- --view=study
-cargo run --locked -- --view=analytics
-cargo run --locked -- --view=settings
-cargo run --locked -- --db /tmp/ebbi-demo/ebbi.db
+git clone https://github.com/Pierorivera1/ebbi.git
+cd ebbi
 cargo build --release --locked
+./target/release/ebbi
 ```
 
-Default storage: `$XDG_DATA_HOME/ebbi/ebbi.db`, falling back to `~/.local/share/ebbi/ebbi.db`. `--db` accepts a new or existing Ebbi database, and rejects legacy/unrecognized schemas. A process lock prevents two Ebbi instances from opening the same database; navigation to an existing instance is a later milestone. `--help` and `--version` do not open storage.
+Source builds are the current distribution method.
 
-## Daily workflow
+### Open a specific view
 
-- Dashboard: habits left, tasks right; columns stack in narrow windows.
-- `a` adds a habit; `i` always opens a new task title field beneath Tasks. Enter saves; Esc cancels. With a task selected, `Enter` shows only its title input inline, just like creation (existing notes and due date are preserved); `d` opens delete confirmation (Enter confirms, Esc cancels). `j/k` select a row, `Space` completes it, and `Enter` edits it. Drag a task card onto another card to reorder it; release outside the list to cancel. Arrow keys also reorder the selected task.
-- `h/l` change date; `t` returns to today. Type a date and press Enter for a specific day.
-- In Settings, Tab reaches path fields, Enter submits the current path, F5/F6 choose Habit Tracker/Repasito, and F8 confirms a visible import preview. Esc cancels a preview or returns to Dashboard.
-- In forms, Tab/Shift-Tab move between fields, Enter in title/due saves, and Esc cancels. Notes support multiple lines. Text inputs retain their normal editing behavior.
-- Archive/restore takes effect tomorrow. Past completions remain available. Future completions and dates before tracking began are disabled.
-- Tasks appear in their saved order. Completed tasks disappear from the list six hours after completion; their records stay saved. Legacy tasks without a known completion timestamp remain visible.
-- Closing the window ends the app. Nothing starts at login or remains as a notification service in this build.
+```sh
+./target/release/ebbi --view=dashboard
+./target/release/ebbi --view=study
+./target/release/ebbi --view=analytics
+./target/release/ebbi --view=settings
+```
 
-Saves run on a dedicated database thread. Success appears only after the transaction commits. Storage failures remain visible and retain the form; a committed save followed by a refresh failure is identified separately and disables the stale dashboard until reload.
+To use a separate database for a demo or experiment:
 
-## Study
+```sh
+./target/release/ebbi --db /tmp/ebbi-demo/ebbi.db
+```
 
-Open **Study**, press F2, or launch `--view=study`. The Repasito-style agenda shows one compact row per review, grouped into Today (including overdue), Tomorrow, later dates and Completed. A seven-day strip starts today, shows pending-count badges (today includes overdue), and scrolls its date range when H/L goes outside it. Click a day to filter; click it again or Show all to clear the filter. Search remains independent of the date filter.
+Run `--help` for options. Closing the window terminates the process.
 
-Press `n` or + Add Topic to enter a title, Markdown notes and study date in a dialog over the agenda. Reviews are generated at +1/+3/+5 days. `/` focuses search; Esc first clears search, then clears a selected date. `h/l` changes the date, `j/k` selects reviews in visible order, Space completes/undoes, `i` or Enter edits a topic, and `d` opens deletion confirmation. Hover a review for +1d snooze, reschedule, expandable notes, edit, study-date and delete actions; right-click opens editing. `r` and `s` also reach review/study-date rescheduling. Completed titles are struck through and remain available for undo.
+### Keyboard essentials
 
-Complete or undo each review separately; all three must be complete for the topic to finish. Editing a title or notes preserves every review. Change study date previews the new dates before confirmation and moves only unfinished reviews. Reschedule changes one unfinished review. Both preserve original deadlines and record the change; overdue reviews stay visible until acted on. Delete requires confirmation. F4 previews Markdown. Markdown preview is local; clicking a link displays its URL without opening a browser.
+| Key | Action |
+| --- | --- |
+| `F1` / `F2` / `F3` | Dashboard / Study / Analytics |
+| `J` / `K` | Select the next / previous row |
+| `H` / `L` | Move between dates |
+| `Space` | Toggle completion or enter a numeric value |
+| `Enter` | Edit the selected item or save a form |
+| `Esc` | Cancel a form or clear Study filters |
+| `PageUp` / `PageDown` | Scroll the main view |
 
-## Numeric habits and analytics
+See the [user guide](docs/usage.md) for habit creation, task controls, review rescheduling, imports, and recovery instructions.
 
-Press `a`, choose Numeric (F4), and enter a unit and minimum, maximum or inclusive-range goal (F5 cycles the rule). Mouse users can create habits in Settings → New habit. Kind and unit are fixed for that habit; create a new habit to change them. Record a value with its dashboard button or select it and press Space. Values must be finite and nonnegative; blank clears the entry. Missing values never count as zero. Goal changes in Settings apply tomorrow or later; the pending goal is shown and earlier entries keep their original goal.
+## Architecture
 
-Open **Analytics**, press F3, or launch `--view=analytics`. Select a 7/30/90-day window ending on the dashboard date. Charts use calendar spacing and 0–100% for completion; hover or click for details, use inspection buttons or Left/Right for keyboard access; keys 1/2/3 choose the range. Numeric charts show actual values and effective target bounds; missing values leave gaps.
+Ebbi separates presentation, application state, domain rules, and SQLite persistence. One worker thread owns the database connection and serializes storage operations; UI updates receive results asynchronously.
 
-Daily completion and consistency divide successes by known eligible opportunities. Untracked, future and unknown schedule dates are excluded; no opportunities means N/A. The current day is provisional. A pending current day preserves yesterday’s streak; archive ends the active streak while keeping the historical longest. Weekly and monthly comparisons use the last two complete periods, with percentage-point change. Study reports count due/overdue/upcoming reviews, actual completion activity and on-time completion against elapsed original deadlines. Legacy original deadlines and local completion dates that were never stored remain unknown, with explicit counts rather than guessed rates.
+```mermaid
+flowchart TD
+    User[Keyboard and mouse] --> UI[Views and charts]
+    UI --> App[Application state and messages]
+    App -->|Operation through mpsc| Worker[Dedicated database worker]
+    Worker --> DB[Persistence layer]
+    DB --> SQLite[(SQLite database)]
+    DB --> Analytics[Pure analytics functions]
+    Worker -->|Reply through oneshot| App
+    App -->|Updated state| UI
+    DB --> Backups[Verified SQLite snapshots]
+    Legacy[Legacy database snapshots] --> DB
+```
 
-F1 returns to Dashboard. PageUp/PageDown scroll long views. Closing the window exits the application.
+### Project structure
 
-## Import
+```text
+src/
+├── main.rs                 # CLI parsing and Iced startup
+├── app.rs                  # Application state, messages, and interactions
+├── ui.rs                   # Dashboard, settings, and shared styling
+├── study_ui.rs             # Study agenda and topic forms
+├── analytics_ui.rs         # Analytics view
+├── charts.rs               # Canvas chart rendering
+├── domain.rs               # Domain types and action/report contracts
+├── analytics.rs            # Pure scheduling and analytics calculations
+├── worker.rs               # Requests, replies, and database thread lifecycle
+└── persistence/
+    ├── mod.rs              # Connection, transactions, snapshots, and backups
+    ├── import.rs           # Legacy import validation and provenance
+    ├── study_numeric.rs    # Study and numeric habit persistence
+    ├── analytics.rs        # Queries and report assembly
+    ├── schema.sql          # Initial schema
+    └── v2.sql              # Numeric habits and review-date migration
+tests/
+├── storage.rs              # Persistence, imports, and backup integrity
+└── study_analytics.rs      # Review behavior, numeric goals, analytics, migration
+```
 
-In Settings choose Habit Tracker or Repasito, browse or type its SQLite path, then preview and confirm. Detected candidates include `habit_tracker/habit_tracker.db`, `habitodo/habitodo.db`, `Omacom/omacalendar/omacalendar.db`, and `Omacom/repasito/repasito.db` under the XDG data directory.
+### Design decisions
 
-The importer opens sources read-only, uses SQLite’s backup API to include live WAL data, validates the snapshot, rechecks the source before commit and imports in a transaction. It preserves source identifiers and raw rows, notes, dates, ordering, completion flags and timestamps. SHA-256 of canonical source rows makes identical snapshots idempotent even when copied to another path; changed previously imported sources require explicit reconciliation. Invalid records cause a visible error and no partial import. Source snapshots and pre-import destination backups remain beside the destination database.
+**Native UI with a database worker.** Iced handles rendering and input. Blocking SQLite work and report calculation run on the owned worker thread, keeping those operations off the UI thread. Channels provide explicit request and response boundaries.
 
-Unknown archive dates, original review deadlines and ambiguous timestamp provenance remain unknown. Exact habit progress excludes uncertain schedules. Legacy completed tasks with unknown completion time retain both facts. Habitodo SQL creation timestamps are UTC; offset-bearing timestamps are converted to the local date for eligibility; stored calendar entry/due dates are preserved unchanged.
+**Commit before reporting success.** Writes use transactions. The application distinguishes a failed write from a committed change whose subsequent refresh or backup failed. Storage startup failures remain visible rather than silently switching to an in-memory database.
 
-Only synthetic data has been used for implementation verification. Check your imported histories before switching apps. Later import of an already changed source is deliberately blocked rather than automatically merging edits; choose one app to edit that history after importing.
+**Historical rules are effective-dated.** Habit activation and numeric goals retain their applicable dates. Numeric entries are stored separately from binary check-ins, and missing entries remain missing. Review reschedules retain the original deadline and an audit record.
 
-## Backups and recovery
+**Calendar dates and timestamps have different roles.** Habit entries and review deadlines use calendar dates. Completion timestamps represent instants; reviews also retain their local completion date when known. Analytics excludes unknown legacy facts instead of reconstructing them by guesswork.
 
-One rolling snapshot is refreshed after committed changes, while Ebbi is open, at `.ebbi-backups/<full-database-filename>/daily.db` beside the database. New snapshots are verified and synced before atomic replacement. Replacement requires the same database identity and refuses active or sidecar-bearing destinations. Permanent snapshots and “Back up now” never overwrite an existing file. Files are created private to the current user.
+**Imports preserve provenance.** Sources are opened read-only and snapshotted with SQLite's backup API, including WAL content. Validated rows are imported transactionally with their source identifiers and raw records. SHA-256 fingerprints detect identical imports, including copies at another path.
 
-A backup error does not undo or hide a committed save; it is reported explicitly. Preview/import operations and backups have bounded SQLite waits. Backups are SQLite databases, not JSON exports. Schema v1 upgrades transactionally to v2 after a verified permanent `pre-v2` backup. If the backup or migration fails, startup reports the error; the migration ledger and schema roll back together. Newer unsupported schemas are refused. Keep permanent pre-upgrade backups: older Ebbi binaries cannot open v2.
+### Data model
 
-To inspect a backup, open a **copy** using `--db /path/to/copy.db`. To restore, close Ebbi, keep the original directory as a recovery copy including any SQLite sidecars, and place a verified backup in a new directory as `ebbi.db`; launch it with `--db`. An in-app restore workflow is deferred to the desktop release milestone. Never replace a live `.db` file or pair a restored file with old WAL/shared-memory files.
+| Area | Main tables | Purpose |
+| --- | --- | --- |
+| Habits | `habits`, `habit_rules`, `habit_entries` | Definitions, effective activation, and binary check-ins |
+| Numeric tracking | `habit_goals`, `habit_values` | Effective goals and dated numeric observations |
+| Tasks | `tasks` | Titles, ordering, completion state, and timestamps |
+| Study | `study_topics`, `study_reviews`, `review_reschedules` | Notes, review stages, original deadlines, and schedule audit |
+| Imports | `legacy_imports`, `legacy_rows` | Import identity and source provenance |
+| Metadata | `settings`, `schema_migrations` | Database identity and ordered migrations |
+
+## Technology stack
+
+| Technology | Role |
+| --- | --- |
+| **Rust 2021** | Application, domain logic, worker, and persistence |
+| **Iced 0.13** | Native UI, event handling, canvas charts, and Markdown preview |
+| **SQLite + rusqlite 0.32** | Local storage, transactions, migrations, and snapshot backups |
+| **chrono** | Calendar dates, timestamps, and review scheduling |
+| **serde / serde_json** | Domain serialization, goal definitions, and imported raw records |
+| **sha2** | Canonical import fingerprinting |
+| **rfd** | Asynchronous native file dialogs through desktop portals |
+| **GitHub Actions** | Formatting, Clippy, tests, and release build checks |
+
+## Data and recovery
+
+The default database is `$XDG_DATA_HOME/ebbi/ebbi.db`, or `~/.local/share/ebbi/ebbi.db` when the XDG variable is unset. `--db` selects a separate Ebbi database. An exclusive process lock prevents concurrent instances from writing to the same database.
+
+Storage uses foreign keys, WAL mode, `FULL` synchronization, and bounded SQLite waits. Migrations create a verified permanent backup before upgrading an existing v1 database. Rolling backups and manual snapshots are verified before completion is reported.
+
+Import and recovery details are in the [user guide](docs/usage.md#import). Original Habit Tracker and Repasito databases are preserved. For restoration, close Ebbi and open a verified backup in a new directory; follow the [recovery instructions](docs/usage.md#backups-and-recovery) to avoid mixing a restored database with old SQLite sidecars.
 
 ## Development
-
-The shared contract lives in `src/domain.rs`. The app and UI contain no SQL; `src/worker.rs` serializes storage work; `src/persistence/` owns schema, queries, snapshots and import. No new abstraction layer or server is required.
-
-The baseline dependencies follow Habit Tracker: Iced, rusqlite, chrono, serde and dirs. Added features/dependencies: rusqlite’s backup API for consistent snapshots, SHA-256 via `sha2` for import identity, and `rfd` 0.17 for async portal file dialogs. `rfd` provides the native picker integration; it is used only on request and needs a functional session portal, with typed paths available as fallback. Iced’s canvas and Markdown features supply native charts and an offline Markdown parser/preview; their transitive dependencies are recorded in the lockfile. No browser renderer or network service is used.
 
 ```sh
 cargo fmt --all -- --check
@@ -81,6 +197,14 @@ TZ=America/Lima cargo test --locked
 cargo build --release --locked
 ```
 
-Tests focus on storage integrity, imports/rollback/idempotency, backup recovery, eligibility and small app/CLI behavior checks. No pixel snapshots, widget-count tests or coverage target. The CI workflow is provided but its remote result has not been observed.
+Tests focus on observable behavior and data integrity: transactional rollback, import idempotency, backup validation, migration safety, review scheduling, missing versus zero values, historical goals, and hand-calculated analytics. Unit tests for app, worker, and CLI behavior live beside their implementation. Native UI checks use temporary synthetic data.
 
-The GitHub Actions workflow runs formatting, Clippy, tests, and a release build on pushes and pull requests. Local implementation checks have also been run on Omarchy + Wayland using synthetic data; no personal history was used.
+## Roadmap
+
+The dashboard, Study, numeric tracking, analytics, imports, and backups are implemented. Remaining desktop release work includes login integration, single-instance view routing, packaging, graphical restore, and formal startup and resource-use benchmarks.
+
+Review scheduling uses fixed checkpoints; adaptive repetition, non-daily habit schedules, and cloud sync are outside the current scope.
+
+## Acknowledgments
+
+Ebbi builds on the product workflows of [Habit Tracker](https://github.com/Pierorivera1/Habit_Tracker) and [Repasito](https://github.com/Pierorivera1/Repasito). README presentation takes inspiration from [Lapce](https://github.com/lapce/lapce), [Zed](https://github.com/zed-industries/zed), and [bat](https://github.com/sharkdp/bat).
