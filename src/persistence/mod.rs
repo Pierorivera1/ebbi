@@ -10,6 +10,7 @@ use std::{
 };
 mod analytics;
 mod import;
+mod restore;
 mod study_numeric;
 pub type Result<T> = std::result::Result<T, String>;
 pub(super) fn err(e: impl std::fmt::Display) -> String {
@@ -24,6 +25,7 @@ pub fn default_db_path() -> Result<PathBuf> {
 pub struct Database {
     conn: Connection,
     _lock: fs::File,
+    stable_lock: fs::File,
     path: PathBuf,
     dirty: bool,
     backup_date: Option<NaiveDate>,
@@ -40,6 +42,25 @@ impl Database {
                 .create(parent)
                 .map_err(err)?;
         }
+        let canonical = if path.exists() {
+            fs::canonicalize(path).map_err(err)?
+        } else {
+            fs::canonicalize(
+                path.parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new(".")),
+            )
+            .map_err(err)?
+            .join(path.file_name().ok_or("Missing database filename")?)
+        };
+        let stable_lock = restore::lock_path(&canonical)?;
+        Self::open_locked(&canonical, stable_lock, None)
+    }
+    fn open_locked(
+        path: &Path,
+        stable_lock: fs::File,
+        inode_lock: Option<fs::File>,
+    ) -> Result<Self> {
         if path.exists() {
             let existing = readonly(path)?;
             let version: i64 = existing
@@ -121,13 +142,18 @@ impl Database {
                 .open(path)
                 .map_err(err)?;
         }
-        let lock = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(err)?;
-        lock.try_lock()
-            .map_err(|e| format!("Database is already in use, or cannot be locked: {e}"))?;
+        let lock = if let Some(lock) = inode_lock {
+            lock
+        } else {
+            let lock = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path)
+                .map_err(err)?;
+            lock.try_lock()
+                .map_err(|e| format!("Database is already in use, or cannot be locked: {e}"))?;
+            lock
+        };
         let conn = Connection::open(path).map_err(err)?;
         conn.busy_timeout(Duration::from_secs(5)).map_err(err)?;
         conn.pragma_update(None, "foreign_keys", "ON")
@@ -145,6 +171,7 @@ impl Database {
         let mut db = Self {
             conn,
             _lock: lock,
+            stable_lock,
             path: path.to_path_buf(),
             dirty: true,
             backup_date: None,
@@ -372,6 +399,21 @@ impl Database {
             }
             Action::SetTaskCompleted { id, completed } => {
                 changed(tx.execute("UPDATE tasks SET completed=?1, completed_at=CASE WHEN ?1 AND completed=0 THEN ?2 WHEN ?1 THEN completed_at ELSE NULL END WHERE id=?3",params![completed,now,id]).map_err(err)?)?;
+            }
+            Action::DeleteHabit(id) => {
+                for table in [
+                    "habit_entries",
+                    "habit_values",
+                    "habit_goals",
+                    "habit_rules",
+                ] {
+                    tx.execute(&format!("DELETE FROM {table} WHERE habit_id=?1"), [id])
+                        .map_err(err)?;
+                }
+                changed(
+                    tx.execute("DELETE FROM habits WHERE id=?1", [id])
+                        .map_err(err)?,
+                )?;
             }
             Action::DeleteTask(id) => {
                 changed(

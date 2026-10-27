@@ -95,7 +95,11 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .form
         .as_ref()
         .is_some_and(|form| matches!(form.kind, FormKind::Task(_)));
-    if app.form.is_some() && !inline_task && app.screen != Screen::Study {
+    let delete_habit = app
+        .form
+        .as_ref()
+        .is_some_and(|form| matches!(form.kind, FormKind::DeleteHabit(_)));
+    if app.form.is_some() && !inline_task && !delete_habit && app.screen != Screen::Study {
         body = body.push(form(app));
     } else {
         body = body.push(match app.screen {
@@ -107,16 +111,18 @@ pub fn view(app: &App) -> Element<'_, Message> {
     }
     let footer = if inline_task {
         "Enter save task · Esc cancel"
+    } else if delete_habit {
+        "Y yes · N no · Esc cancel"
     } else if app.form.is_some() {
         "Esc cancel · Tab move between fields"
     } else if app.screen == Screen::Study {
-        "N add topic · / search · H/L day · J/K navigate · I edit · D delete · Space complete · Esc clear"
+        "N add topic · H/L day · J/K navigate · I edit · D delete · Space complete · Esc clear"
     } else if app.screen == Screen::Analytics {
         "Left/Right inspect dates · 1/2/3 range · F1 dashboard · F2 study"
     } else if app.screen == Screen::Settings {
         "Tab fields · Enter preview/backup · F5 habits · F6 study · F8 confirm import · Esc back"
     } else {
-        "j/k select · Up/Down move task · i add task · Enter edit · d delete task · Space complete · h/l day · t today · a habit"
+        "j/k select within column · h habits / l tasks · Up/Down move task · i add task · Enter edit · d delete · Space complete · t today · a habit"
     };
     let hint = text(footer)
         .font(if app.screen == Screen::Study {
@@ -159,15 +165,19 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill)
     .into();
-    if app.screen == Screen::Study && app.form.is_some() {
+    if delete_habit || (app.screen == Screen::Study && app.form.is_some()) {
         let mut modal = column![].spacing(10);
         if let Some(error) = &app.error {
             modal = modal.push(text(error).color(ERROR).size(14));
         }
         modal = modal.push(form(app));
         let dialog = container(scrollable(modal))
-            .max_width(680)
-            .height(Length::Fill)
+            .max_width(if delete_habit { 460 } else { 680 })
+            .height(if delete_habit {
+                Length::Shrink
+            } else {
+                Length::Fill
+            })
             .padding([24, 0]);
         let backdrop = container(dialog)
             .padding([0, 24])
@@ -215,35 +225,6 @@ fn dashboard(app: &App, ready: bool) -> Element<'_, Message> {
             )
             .into();
     };
-    let eligible = data
-        .habits
-        .iter()
-        .filter(|h| h.eligible && h.eligibility_known)
-        .count();
-    let completed = data
-        .habits
-        .iter()
-        .filter(|h| h.eligible && h.eligibility_known && h.completed)
-        .count();
-    let task_due = data
-        .tasks
-        .iter()
-        .filter(|t| !t.completed && t.due_date == Some(app.date))
-        .count();
-    let task_late = data
-        .tasks
-        .iter()
-        .filter(|t| !t.completed && t.due_date.is_some_and(|d| d < app.date))
-        .count();
-    let progress = if eligible == 0 {
-        "No habits scheduled · N/A".into()
-    } else {
-        format!("{completed}/{eligible} habits completed")
-    };
-    body = body.push(column![
-        text(progress).size(16).color(ACCENT),
-        text(format!("Selected day: {task_due} tasks due · {task_late} overdue · {} reviews due · {} overdue", data.reviews_due, data.reviews_overdue)).size(13).color(MUTED),
-    ].spacing(6));
     if data.habits.iter().any(|h| !h.eligibility_known) {
         body=body.push(text("Some legacy schedules are unknown. Their records are shown, but excluded from exact progress.").size(13).color(MUTED));
     }
@@ -260,13 +241,6 @@ fn dashboard(app: &App, ready: bool) -> Element<'_, Message> {
         body = body.push(row![habits, tasks].spacing(18));
     } else {
         body = body.push(column![habits, tasks].spacing(18));
-    }
-    if data.reviews_due + data.reviews_overdue > 0 {
-        body = body.push(action(
-            "Open due study reviews",
-            Message::Navigate(Screen::Study),
-            !app.busy,
-        ));
     }
     body.into()
 }
@@ -478,6 +452,27 @@ fn task_list(app: &App, ready: bool) -> Element<'_, Message> {
 fn form(app: &App) -> Element<'_, Message> {
     let form = app.form.as_ref().expect("view checked form");
     let ready = !app.busy;
+    if matches!(form.kind, FormKind::DeleteHabit(_)) {
+        return container(
+            column![
+                text("Do you want to delete a habit?").size(20),
+                text(&form.title),
+                text("Its tracking history will also be deleted.")
+                    .size(13)
+                    .color(MUTED),
+                row![
+                    action("Yes", Message::Save, ready),
+                    action("No", Message::Cancel, ready),
+                ]
+                .spacing(10),
+            ]
+            .spacing(12),
+        )
+        .padding(20)
+        .style(panel)
+        .width(Length::Fill)
+        .into();
+    }
     if matches!(
         form.kind,
         FormKind::DeleteTask(_) | FormKind::DeleteStudy(_)
@@ -719,11 +714,24 @@ fn settings(app: &App, ready: bool) -> Element<'_, Message> {
         .as_ref()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|e| e.clone());
-    let mut content=column![text("Your workspace").size(29),text("Local storage").size(18),text(db_path).size(13).color(MUTED),text("One rolling daily backup after changes. Migration and import snapshots are retained.").size(13).color(MUTED),
+    let mut content=column![text("Your workspace").size(29),text("Local storage").size(18),text(db_path.clone()).size(13).color(MUTED),text("One rolling daily backup after changes. Migration and import snapshots are retained.").size(13).color(MUTED),
         text_input("Backup destination (.db)",&app.backup_path).on_input(Message::BackupPath).on_submit(Message::Backup).padding(10),row![action("Choose destination…",Message::BrowseBackup,!app.busy),action("Back up now",Message::Backup,ready && !app.backup_path.trim().is_empty())].spacing(8),horizontal_rule(1),
-        text("Import legacy history").size(20),text("Choose a source and inspect a verified snapshot before importing. Existing apps keep their own databases.").size(13).color(MUTED),
+        text("Restore an Ebbi backup").size(20),
+        text("Restore an earlier snapshot of this workspace. Your current data is preserved in a permanent recovery backup before replacement.").size(13).color(MUTED),
+        text_input("Path to Ebbi backup", &app.restore_path).on_input(Message::RestorePath).on_submit(Message::Restore).padding(10),
+        row![action("Choose backup…", Message::BrowseRestore, !app.busy), action("Restore backup…", Message::Restore, ready && !app.busy && !app.restore_path.trim().is_empty())].spacing(8)].spacing(14);
+    if app.restore_confirm {
+        content = content.push(container(column![
+            text("Replace this workspace with the selected backup?").size(18).color(ERROR),
+            text(format!("Backup: {}", app.restore_path.trim())).size(13),
+            text(format!("Workspace: {db_path}")).size(13),
+            text("Changes made after this backup will be removed from the workspace. A verified recovery copy of the current data will be retained.").size(13),
+            row![action("Confirm restore [F8]", Message::ConfirmRestore, ready && !app.busy), action("Cancel", Message::CancelRestore, !app.busy)].spacing(8)
+        ].spacing(10)).padding(16).style(panel));
+    }
+    content = content.push(horizontal_rule(1)).push(column![text("Import legacy history").size(20),text("Choose a source and inspect a verified snapshot before importing. Existing apps keep their own databases.").size(13).color(MUTED),
         row![action("Habit Tracker [F5]",Message::SourceKind(LegacyKind::Habitodo),!app.busy),action("Repasito [F6]",Message::SourceKind(LegacyKind::Repasito),!app.busy)].spacing(8),
-        text(format!("Source: {}",app.source_kind)).size(13),text_input("Path to legacy SQLite database",&app.source_path).on_input(Message::SourcePath).on_submit(Message::Preview).padding(10),row![action("Browse…",Message::BrowseSource,!app.busy),action("Preview import",Message::Preview,ready && !app.source_path.trim().is_empty())].spacing(8)].spacing(14);
+        text(format!("Source: {}",app.source_kind)).size(13),text_input("Path to legacy SQLite database",&app.source_path).on_input(Message::SourcePath).on_submit(Message::Preview).padding(10),row![action("Browse…",Message::BrowseSource,!app.busy),action("Preview import",Message::Preview,ready && !app.source_path.trim().is_empty())].spacing(8)].spacing(14));
     if let Some(preview) = &app.preview {
         let mut report = column![
             text("Import preview").size(18),
@@ -823,6 +831,6 @@ fn settings(app: &App, ready: bool) -> Element<'_, Message> {
             );
         }
     }
-    content=content.push(horizontal_rule(1)).push(text("Release scope").size(18)).push(text("This build includes the daily dashboard, study and habit analytics. Login integration, single-instance routing and packaging remain planned.").size(13).color(MUTED));
+    content=content.push(horizontal_rule(1)).push(text("Release scope").size(18)).push(text("This build includes the daily dashboard, study, habit analytics, single-instance view routing and backup restore.").size(13).color(MUTED));
     content.into()
 }

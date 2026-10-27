@@ -2,7 +2,7 @@
 
 Ebbi is a local-first desktop app for habits, tasks, study reviews, and personal analytics. It brings daily planning and spaced repetition into one native Linux application, with private SQLite storage and no account or network service.
 
-The interface is built with Rust and Iced for Omarchy, Wayland, and Linux desktops. The core workflows are implemented, including import and backup tools for existing Habit Tracker and Repasito data. The app is currently built from source; login startup, single-instance view routing, packaged distribution, and in-app graphical restore are planned.
+The interface is built with Rust and Iced for Omarchy, Wayland, and Linux desktops. The core workflows are implemented, including import and backup tools for existing Habit Tracker and Repasito data. See the [installation guide](installation.md) for local Arch/Omarchy packaging and desktop launchers, or the [sample data guide](sample-data.md) for a separate synthetic demo. Repeated launches for the same database route to the existing window. Settings includes confirmed backup restore; published release artifacts remain planned.
 
 ## Build and run
 
@@ -17,13 +17,14 @@ cargo run --locked -- --db /tmp/ebbi-demo/ebbi.db
 cargo build --release --locked
 ```
 
-Default storage: `$XDG_DATA_HOME/ebbi/ebbi.db`, falling back to `~/.local/share/ebbi/ebbi.db`. `--db` accepts a new or existing Ebbi database, and rejects legacy/unrecognized schemas. A process lock prevents two Ebbi instances from opening the same database; navigation to an existing instance is a later milestone. `--help` and `--version` do not open storage.
+Default storage: `$XDG_DATA_HOME/ebbi/ebbi.db`, falling back to `~/.local/share/ebbi/ebbi.db`. `--db` accepts a new or existing Ebbi database, and rejects legacy/unrecognized schemas. Repeated launches for the same database route the requested view to the existing window; a different `--db` path uses an independent instance. `--help` and `--version` do not open storage.
 
 ## Daily workflow
 
 - Dashboard: habits left, tasks right; columns stack in narrow windows.
-- `a` adds a habit; `i` always opens a new task title field beneath Tasks. Enter saves; Esc cancels. With a task selected, `Enter` shows only its title input inline, just like creation (existing notes and due date are preserved); `d` opens delete confirmation (Enter confirms, Esc cancels). `j/k` select a row, `Space` completes it, and `Enter` edits it. Drag a task card onto another card to reorder it; release outside the list to cancel. Arrow keys also reorder the selected task.
-- `h/l` change date; `t` returns to today. Type a date and press Enter for a specific day.
+- `a` adds a habit; `i` always opens a new task title field beneath Tasks. Enter saves; Esc cancels. With a task selected, `Enter` shows only its title input inline, just like creation (existing notes and due date are preserved); `d` opens delete confirmation (Enter confirms, Esc cancels). `j/k` select a row within the current column and stop at its first/last row, `Space` completes it, and `Enter` edits it. Drag a task card onto another card to reorder it; release outside the list to cancel. Arrow keys also reorder the selected task.
+- `h` selects Daily habits on the left; `l` selects Tasks on the right. The first visible row is selected when switching columns; pressing the same key again keeps the current row. An empty column leaves selection unchanged. `t` returns to today. Type a date and press Enter for a specific day.
+- With a habit selected, `d` opens “Do you want to delete a habit?” with Yes/No buttons and the habit name. Yes (or `y`) deletes the habit and its tracking history; No (`n`) or Esc cancels.
 - In Settings, Tab reaches path fields, Enter submits the current path, F5/F6 choose Habit Tracker/Repasito, and F8 confirms a visible import preview. Esc cancels a preview or returns to Dashboard.
 - In forms, Tab/Shift-Tab move between fields, Enter in title/due saves, and Esc cancels. Notes support multiple lines. Text inputs retain their normal editing behavior.
 - Archive/restore takes effect tomorrow. Past completions remain available. Future completions and dates before tracking began are disabled.
@@ -66,18 +67,20 @@ One rolling snapshot is refreshed after committed changes, while Ebbi is open, a
 
 A backup error does not undo or hide a committed save; it is reported explicitly. Preview/import operations and backups have bounded SQLite waits. Backups are SQLite databases, not JSON exports. Schema v1 upgrades transactionally to v2 after a verified permanent `pre-v2` backup. If the backup or migration fails, startup reports the error; the migration ledger and schema roll back together. Newer unsupported schemas are refused. Keep permanent pre-upgrade backups: older Ebbi binaries cannot open v2.
 
-To inspect a backup, open a **copy** using `--db /path/to/copy.db`. To restore, close Ebbi, keep the original directory as a recovery copy including any SQLite sidecars, and place a verified backup in a new directory as `ebbi.db`; launch it with `--db`. An in-app restore workflow is deferred to the desktop release milestone. Never replace a live `.db` file or pair a restored file with old WAL/shared-memory files.
+To restore an earlier snapshot, open **Settings → Restore an Ebbi backup**, choose or type the backup path, then confirm the displayed source and workspace with the button or F8. Escape cancels confirmation. The backup must be a closed, supported backup of this same workspace. Ebbi validates a separate copy, preserves a verified permanent pre-restore snapshot, closes SQLite, replaces the database and reloads it. The success notice gives the recovery snapshot path. Invalid, active, unrelated or unsupported backups are rejected. After an error, use Reload or Retry before continuing.
+
+Graphical restore requires a readable current workspace. If storage cannot open, close Ebbi, keep the original directory including SQLite sidecars, copy a verified backup into a new directory as `ebbi.db`, and launch with `--db /path/to/new/ebbi.db`. Never replace a live `.db` file or pair a restored file with old WAL/shared-memory files.
 
 ## Development
 
 The shared contract lives in `src/domain.rs`. The app and UI contain no SQL; `src/worker.rs` serializes storage work; `src/persistence/` owns schema, queries, snapshots and import. No new abstraction layer or server is required.
 
-The baseline dependencies follow Habit Tracker: Iced, rusqlite, chrono, serde and dirs. Added features/dependencies: rusqlite’s backup API for consistent snapshots, SHA-256 via `sha2` for import identity, and `rfd` 0.17 for async portal file dialogs. `rfd` provides the native picker integration; it is used only on request and needs a functional session portal, with typed paths available as fallback. Iced’s canvas and Markdown features supply native charts and an offline Markdown parser/preview; their transitive dependencies are recorded in the lockfile. No browser renderer or network service is used.
+The baseline dependencies follow Habit Tracker: Iced, rusqlite, chrono, serde and dirs. Added features/dependencies: rusqlite’s backup API for consistent snapshots, SHA-256 via `sha2` for import identity, and `rfd` 0.17 for async portal file dialogs. `rfd` provides the native picker integration; it is used only on request and needs a functional session portal, with typed paths available as fallback. Iced’s canvas and Markdown features supply native charts and an offline Markdown parser/preview; their transitive dependencies are recorded in the lockfile. The already locked `rustix` 1.1 library is also a direct dependency for safe nonblocking Unix socket connections, keeping repeated launches bounded even when a listener backlog is full; no new package versions or resident services were added. No browser renderer or network service is used.
 
 ```sh
 cargo fmt --all -- --check
 cargo clippy --all-targets --locked -- -D warnings
-TZ=America/Lima cargo test --locked
+TZ=America/Lima cargo test --all-targets --locked
 cargo build --release --locked
 ```
 

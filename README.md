@@ -68,7 +68,8 @@ cargo build --release --locked
 ./target/release/ebbi
 ```
 
-Source builds are the current distribution method.
+For an Arch/Omarchy package and desktop launcher, follow the
+[installation guide](docs/installation.md).
 
 ### Open a specific view
 
@@ -85,15 +86,22 @@ To use a separate database for a demo or experiment:
 ./target/release/ebbi --db /tmp/ebbi-demo/ebbi.db
 ```
 
-Run `--help` for options. Closing the window terminates the process.
+To populate a separate database with 90 days of synthetic history, follow the
+[sample data guide](docs/sample-data.md).
+
+After installation, open **Ebbi** from the application launcher. Run `--help` for options. Closing the window terminates the process.
+
+Launching Ebbi again with the same database routes the requested view to the
+already open window. Launching with a different `--db` path opens an independent
+instance.
 
 ### Keyboard essentials
 
 | Key | Action |
 | --- | --- |
 | `F1` / `F2` / `F3` | Dashboard / Study / Analytics |
-| `J` / `K` | Select the next / previous row |
-| `H` / `L` | Move between dates |
+| `J` / `K` | Select the next / previous row within the current column |
+| `H` / `L` | Dashboard: select habits / tasks; Study: move between dates |
 | `Space` | Toggle completion or enter a numeric value |
 | `Enter` | Edit the selected item or save a form |
 | `Esc` | Cancel a form or clear Study filters |
@@ -132,8 +140,10 @@ src/
 ├── domain.rs               # Domain types and action/report contracts
 ├── analytics.rs            # Pure scheduling and analytics calculations
 ├── worker.rs               # Requests, replies, and database thread lifecycle
+├── instance.rs             # Single-instance locking and view routing
 └── persistence/
     ├── mod.rs              # Connection, transactions, snapshots, and backups
+    ├── restore.rs          # Validated graphical backup restore
     ├── import.rs           # Legacy import validation and provenance
     ├── study_numeric.rs    # Study and numeric habit persistence
     ├── analytics.rs        # Queries and report assembly
@@ -186,14 +196,17 @@ The default database is `$XDG_DATA_HOME/ebbi/ebbi.db`, or `~/.local/share/ebbi/e
 
 Storage uses foreign keys, WAL mode, `FULL` synchronization, and bounded SQLite waits. Migrations create a verified permanent backup before upgrading an existing v1 database. Rolling backups and manual snapshots are verified before completion is reported.
 
-Import and recovery details are in the [user guide](docs/usage.md#import). Original Habit Tracker and Repasito databases are preserved. For restoration, close Ebbi and open a verified backup in a new directory; follow the [recovery instructions](docs/usage.md#backups-and-recovery) to avoid mixing a restored database with old SQLite sidecars.
+Import and recovery details are in the [user guide](docs/usage.md#import). Original Habit Tracker and Repasito databases are preserved. Restore a backup through **Settings → Restore an Ebbi backup**; Ebbi validates it and saves a permanent pre-restore recovery snapshot. If Ebbi cannot open the current database, use the manual recovery steps in the [user guide](docs/usage.md#backups-and-recovery).
+
+Archiving a habit keeps its history; confirming deletion removes the habit and its
+binary and numeric history. Create a backup before deleting data you may need.
 
 ## Development
 
 ```sh
 cargo fmt --all -- --check
 cargo clippy --all-targets --locked -- -D warnings
-TZ=America/Lima cargo test --locked
+TZ=America/Lima cargo test --all-targets --locked
 cargo build --release --locked
 ```
 
@@ -201,9 +214,14 @@ Tests focus on observable behavior and data integrity: transactional rollback, i
 
 ## Roadmap
 
-The dashboard, Study, numeric tracking, analytics, imports, and backups are implemented. Remaining desktop release work includes login integration, single-instance view routing, packaging, graphical restore, and formal startup and resource-use benchmarks.
+The dashboard, Study, numeric tracking, analytics, imports, and backups are implemented. Local Arch packaging, desktop launchers, and a synthetic sample generator are available. Single-instance view routing and graphical backup restore are implemented. The package is built locally; release automation and formal startup and resource-use benchmarks remain outstanding.
 
 Review scheduling uses fixed checkpoints; adaptive repetition, non-daily habit schedules, and cloud sync are outside the current scope.
+
+## License
+
+Available under either the [MIT license](LICENSE-MIT) or the
+[Apache License 2.0](LICENSE-APACHE), matching the Cargo package declaration.
 
 ## Acknowledgments
 

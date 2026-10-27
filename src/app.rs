@@ -41,6 +41,7 @@ pub enum FormKind {
     Habit(Option<i64>),
     Task(Option<i64>),
     DeleteTask(i64),
+    DeleteHabit(i64),
     NumericHabit,
     HabitValue(i64),
     HabitGoal(i64),
@@ -87,7 +88,6 @@ pub enum Message {
     GoalMode(GoalMode),
     Bound(String),
     Upper(String),
-    StudySearch(String),
     StudyDay(Option<NaiveDate>),
     HoverReview(Option<i64>),
     ToggleReviewNotes(i64),
@@ -98,6 +98,8 @@ pub enum Message {
     AnalyticsDays(u32),
     InspectDay(usize),
     Navigate(Screen),
+    ExternalNavigate(Screen),
+    ResumeNavigation,
     DateStep(i64),
     Today,
     DateInput(String),
@@ -125,6 +127,12 @@ pub enum Message {
     Import,
     BackupPath(String),
     Backup,
+    RestorePath(String),
+    BrowseRestore,
+    PickedRestore(Option<PathBuf>),
+    Restore,
+    ConfirmRestore,
+    CancelRestore,
     BrowseSource,
     BrowseBackup,
     PickedPath(bool, Option<PathBuf>),
@@ -133,7 +141,6 @@ pub enum Message {
 
 pub struct App {
     pub screen: Screen,
-    pub study_search: String,
     pub study_date: Option<NaiveDate>,
     pub study_hovered: Option<i64>,
     pub study_notes: Option<i64>,
@@ -159,7 +166,12 @@ pub struct App {
     pub source_kind: LegacyKind,
     pub preview: Option<ImportPreview>,
     pub backup_path: String,
+    pub restore_path: String,
+    pub restore_confirm: bool,
+    pending_screen: Option<Screen>,
+    restoring: bool,
     worker: Option<Worker>,
+    pub instance: Option<crate::instance::Instance>,
     close_form_after_save: bool,
 }
 
@@ -183,7 +195,6 @@ impl App {
         let error = path.as_ref().err().cloned();
         let mut app = Self {
             screen,
-            study_search: String::new(),
             study_date: None,
             study_hovered: None,
             study_notes: None,
@@ -208,6 +219,11 @@ impl App {
             source_kind: LegacyKind::Habitodo,
             preview: None,
             backup_path,
+            restore_path: String::new(),
+            restore_confirm: false,
+            instance: None,
+            pending_screen: None,
+            restoring: false,
             db_path: path,
             worker,
             close_form_after_save: false,
@@ -289,6 +305,18 @@ impl App {
                 self.busy = false;
                 match result {
                     Ok(reply) => {
+                        if self.restoring {
+                            self.restoring = false;
+                            self.restore_confirm = false;
+                            self.analytics = None;
+                            self.preview = None;
+                            self.selected = None;
+                            self.study_selected = None;
+                            self.study_hovered = None;
+                            self.study_notes = None;
+                            self.drag_task = None;
+                            self.drop_task = None;
+                        }
                         let is_analytics = reply.analytics.is_some();
                         if let Some(report) = reply.analytics {
                             match report {
@@ -348,10 +376,25 @@ impl App {
                             return self.run(Operation::Analytics(self.analytics_days));
                         }
                         if closed_form {
-                            return iced::widget::text_input::focus("no-input");
+                            return Task::batch([
+                                iced::widget::text_input::focus("no-input"),
+                                Task::done(Message::ResumeNavigation),
+                            ]);
                         }
                     }
                     Err(error) => {
+                        if self.restoring {
+                            self.data = None;
+                            self.analytics = None;
+                            self.preview = None;
+                            self.selected = None;
+                            self.study_selected = None;
+                            self.study_hovered = None;
+                            self.study_notes = None;
+                            self.drag_task = None;
+                            self.drop_task = None;
+                        }
+                        self.restoring = false;
                         self.error = Some(error);
                         self.close_form_after_save = false;
                     }
@@ -399,10 +442,6 @@ impl App {
                     }
                 }
             }
-            Message::StudySearch(value) => {
-                self.study_search = value;
-                self.study_selected = self.study_reviews().first().map(|r| r.id);
-            }
             Message::StudyDay(date) => {
                 self.study_date = date;
                 self.study_selected = self.study_reviews().first().map(|r| r.id);
@@ -448,6 +487,15 @@ impl App {
             Message::BackupPath(value) => self.backup_path = value,
             Message::DateInput(value) => self.date_input = value,
             Message::Tick => {
+                if !self.busy
+                    && self.form.is_none()
+                    && !self.restore_confirm
+                    && self.preview.is_none()
+                {
+                    if let Some(screen) = self.pending_screen.take() {
+                        return self.update(Message::Navigate(screen));
+                    }
+                }
                 if self
                     .selected
                     .is_some_and(|selection| !self.selections().contains(&selection))
@@ -482,6 +530,19 @@ impl App {
                 self.drop_task = None;
             }
             Message::Key(key, modifiers) => return self.key(key, modifiers),
+            Message::ExternalNavigate(screen) => {
+                if self.busy
+                    || self.form.is_some()
+                    || self.restore_confirm
+                    || self.preview.is_some()
+                {
+                    self.pending_screen = Some(screen);
+                    self.notice = Some("A view was requested from another launch. Finish or cancel the current operation to switch views.".into());
+                    return Task::none();
+                }
+                return self.update(Message::Navigate(screen));
+            }
+            Message::ResumeNavigation => {}
             _ if self.busy => {}
             Message::SnoozeReview(id) => {
                 if let Some(review) = self.data.as_ref().and_then(|d| {
@@ -520,7 +581,11 @@ impl App {
                 return self.run(Operation::Analytics(days));
             }
             Message::Navigate(screen) => {
+                if self.restoring {
+                    return Task::none();
+                }
                 self.screen = screen;
+                self.restore_confirm = false;
                 self.form = None;
                 self.selected = None;
                 self.drag_task = None;
@@ -583,7 +648,10 @@ impl App {
                 self.form = None;
                 self.preview = None;
                 self.error = None;
-                return iced::widget::text_input::focus("no-input");
+                return Task::batch([
+                    iced::widget::text_input::focus("no-input"),
+                    Task::done(Message::ResumeNavigation),
+                ]);
             }
             Message::Save => return self.save(),
             Message::Act(action) => return self.run(Operation::Apply(action)),
@@ -632,6 +700,56 @@ impl App {
             Message::Backup => {
                 return self.run(Operation::Backup(PathBuf::from(self.backup_path.trim())))
             }
+            Message::RestorePath(value) => {
+                if !self.busy {
+                    self.restore_path = value;
+                    self.restore_confirm = false;
+                }
+            }
+            Message::BrowseRestore => {
+                if !self.busy {
+                    return Task::perform(
+                        async {
+                            rfd::AsyncFileDialog::new()
+                                .add_filter("Ebbi backup", &["db", "sqlite", "sqlite3"])
+                                .set_title("Select an Ebbi backup to restore")
+                                .pick_file()
+                                .await
+                                .map(|file| file.path().to_path_buf())
+                        },
+                        Message::PickedRestore,
+                    );
+                }
+            }
+            Message::PickedRestore(path) => {
+                if !self.busy {
+                    if let Some(path) = path {
+                        self.restore_path = path.to_string_lossy().into_owned();
+                        self.restore_confirm = false;
+                    }
+                }
+            }
+            Message::Restore => {
+                if !self.busy && self.data.is_some() && !self.restore_path.trim().is_empty() {
+                    self.restore_confirm = true;
+                }
+            }
+            Message::ConfirmRestore => {
+                if !self.busy && self.restore_confirm && self.data.is_some() {
+                    self.restoring = true;
+                    return self.run(Operation::Restore(PathBuf::from(self.restore_path.trim())));
+                }
+            }
+            Message::CancelRestore => {
+                if !self.busy {
+                    self.restore_confirm = false;
+                }
+            }
+        }
+        if !self.busy && self.form.is_none() && !self.restore_confirm && self.preview.is_none() {
+            if let Some(screen) = self.pending_screen.take() {
+                return self.update(Message::Navigate(screen));
+            }
         }
         Task::none()
     }
@@ -655,7 +773,7 @@ impl App {
             entry_date: self.date,
         };
         match kind {
-            FormKind::Habit(Some(id)) => {
+            FormKind::Habit(Some(id)) | FormKind::DeleteHabit(id) => {
                 if let Some(habit) = self
                     .data
                     .as_ref()
@@ -798,6 +916,7 @@ impl App {
         let action = (|| -> Result<Action, String> {
             match form.kind {
                 FormKind::DeleteTask(id) => Ok(Action::DeleteTask(id)),
+                FormKind::DeleteHabit(id) => Ok(Action::DeleteHabit(id)),
                 FormKind::DeleteStudy(id) => Ok(Action::DeleteStudyTopic(id)),
                 FormKind::HabitValue(id) => Ok(Action::SetHabitValue {
                     id,
@@ -888,19 +1007,9 @@ impl App {
     }
 
     pub fn study_topics(&self) -> Vec<&StudyTopic> {
-        let query = self.study_search.trim().to_lowercase();
         self.data
             .as_ref()
-            .map(|data| {
-                data.study_topics
-                    .iter()
-                    .filter(|topic| {
-                        query.is_empty()
-                            || topic.title.to_lowercase().contains(&query)
-                            || topic.notes.to_lowercase().contains(&query)
-                    })
-                    .collect()
-            })
+            .map(|data| data.study_topics.iter().collect())
             .unwrap_or_default()
     }
 
@@ -997,15 +1106,17 @@ impl App {
         if self.busy {
             return Task::none();
         }
+        if self.restore_confirm && key == Key::Named(Named::F8) {
+            return self.update(Message::ConfirmRestore);
+        }
         if key == Key::Named(Named::Escape) {
+            if self.restore_confirm {
+                return self.update(Message::CancelRestore);
+            }
             if self.screen == Screen::Study && self.form.is_none() {
-                if !self.study_search.is_empty() {
-                    self.study_search.clear();
-                } else {
-                    self.study_date = None;
-                }
+                self.study_date = None;
                 self.study_selected = self.study_reviews().first().map(|r| r.id);
-                return iced::widget::text_input::focus("no-input");
+                return Task::none();
             }
             return self.update(
                 if self.screen == Screen::Settings && self.preview.is_none() && self.form.is_none()
@@ -1040,6 +1151,13 @@ impl App {
             };
         }
         if let Some(form) = &self.form {
+            if matches!(form.kind, FormKind::DeleteHabit(_)) {
+                return match key.as_ref() {
+                    Key::Character("y") if modifiers.is_empty() => self.save(),
+                    Key::Character("n") if modifiers.is_empty() => self.update(Message::Cancel),
+                    _ => Task::none(),
+                };
+            }
             if key == Key::Named(Named::F5)
                 && matches!(form.kind, FormKind::NumericHabit | FormKind::HabitGoal(_))
             {
@@ -1078,7 +1196,6 @@ impl App {
                 .and_then(|id| reviews.iter().find(|r| r.id == id).copied());
             return match key.as_ref() {
                 Key::Character("n") => self.open_form(FormKind::Study(None)),
-                Key::Character("/") => iced::widget::text_input::focus("study-search"),
                 Key::Character("j") | Key::Character("k") => {
                     let current =
                         selected.and_then(|r| reviews.iter().position(|entry| entry.id == r.id));
@@ -1208,7 +1325,16 @@ impl App {
                 }
             }
             Key::Character("j") | Key::Character("k") => {
-                let items = self.selections();
+                let items: Vec<_> = self
+                    .selections()
+                    .into_iter()
+                    .filter(|item| {
+                        self.selected.is_none_or(|selected| {
+                            matches!(selected, Selection::Habit(_))
+                                == matches!(item, Selection::Habit(_))
+                        })
+                    })
+                    .collect();
                 if items.is_empty() {
                     return Task::none();
                 }
@@ -1227,15 +1353,29 @@ impl App {
                     .unwrap_or(0);
                 self.selected = Some(items[index]);
             }
-            Key::Character("h") => return self.update(Message::DateStep(-1)),
-            Key::Character("l") => return self.update(Message::DateStep(1)),
-            Key::Character("t") => return self.update(Message::Today),
-            Key::Character("i") => return self.open_form(FormKind::Task(None)),
-            Key::Character("d") => {
-                if let Some(Selection::Task(id)) = self.selected {
-                    return self.open_form(FormKind::DeleteTask(id));
+            Key::Character("h") | Key::Character("l") => {
+                let habits = matches!(key.as_ref(), Key::Character("h"));
+                if let Some(selection) = self
+                    .selections()
+                    .into_iter()
+                    .filter(|s| matches!(s, Selection::Habit(_)) == habits)
+                    .find(|s| Some(*s) == self.selected)
+                    .or_else(|| {
+                        self.selections()
+                            .into_iter()
+                            .find(|s| matches!(s, Selection::Habit(_)) == habits)
+                    })
+                {
+                    self.selected = Some(selection);
                 }
             }
+            Key::Character("t") => return self.update(Message::Today),
+            Key::Character("i") => return self.open_form(FormKind::Task(None)),
+            Key::Character("d") => match self.selected {
+                Some(Selection::Task(id)) => return self.open_form(FormKind::DeleteTask(id)),
+                Some(Selection::Habit(id)) => return self.open_form(FormKind::DeleteHabit(id)),
+                None => {}
+            },
             Key::Character("a") => return self.open_form(FormKind::Habit(None)),
             Key::Named(Named::Enter) => match self.selected {
                 Some(Selection::Habit(id)) => return self.open_form(FormKind::Habit(Some(id))),
@@ -1307,7 +1447,11 @@ impl App {
             }
             _ => None,
         });
-        Subscription::batch([events, Subscription::run(clock)])
+        let mut subscriptions = vec![events, Subscription::run(clock)];
+        if let Some(instance) = &self.instance {
+            subscriptions.push(instance.subscription().map(Message::ExternalNavigate));
+        }
+        Subscription::batch(subscriptions)
     }
 }
 
@@ -1333,6 +1477,121 @@ fn clock() -> impl iced::futures::Stream<Item = Message> {
 mod tests {
     use super::*;
     use ebbi::domain::Todo;
+
+    #[test]
+    fn habit_delete_requires_yes_and_task_delete_still_opens_its_own_form() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::new(Ok(temp.path().join("delete.db")), Screen::Dashboard);
+        let reply = iced::futures::executor::block_on(app.worker.as_ref().unwrap().request(
+            Operation::Apply(Action::AddHabit("Read".into())),
+            app.date,
+            app.today,
+        ))
+        .unwrap();
+        let _ = app.update(Message::Loaded(Ok(Box::new(reply))));
+        let id = app.data.as_ref().unwrap().habits[0].id;
+        app.selected = Some(Selection::Habit(id));
+        let press = |app: &mut App, key: keyboard::Key| {
+            let _ = app.key(key, keyboard::Modifiers::empty());
+        };
+        press(&mut app, keyboard::Key::Character("d".into()));
+        assert!(
+            matches!(app.form.as_ref().unwrap().kind, FormKind::DeleteHabit(found) if found == id)
+        );
+        assert_eq!(app.form.as_ref().unwrap().title, "Read");
+        press(&mut app, keyboard::Key::Character("d".into()));
+        press(&mut app, keyboard::Key::Named(keyboard::key::Named::Enter));
+        assert!(!app.busy);
+        press(&mut app, keyboard::Key::Character("n".into()));
+        assert!(app.form.is_none());
+        press(&mut app, keyboard::Key::Character("d".into()));
+        press(&mut app, keyboard::Key::Named(keyboard::key::Named::Escape));
+        assert!(app.form.is_none());
+        let reply = iced::futures::executor::block_on(app.worker.as_ref().unwrap().request(
+            Operation::Refresh,
+            app.date,
+            app.today,
+        ))
+        .unwrap();
+        assert_eq!(reply.snapshot.unwrap().habits.len(), 1);
+        press(&mut app, keyboard::Key::Character("d".into()));
+        press(&mut app, keyboard::Key::Character("y".into()));
+        assert!(app.busy);
+        let reply = iced::futures::executor::block_on(app.worker.as_ref().unwrap().request(
+            Operation::Refresh,
+            app.date,
+            app.today,
+        ))
+        .unwrap();
+        assert!(reply.snapshot.as_ref().unwrap().habits.is_empty());
+        let _ = app.update(Message::Loaded(Ok(Box::new(reply))));
+        assert!(app.form.is_none());
+        assert!(app.selected.is_none());
+        app.selected = Some(Selection::Task(42));
+        press(&mut app, keyboard::Key::Character("d".into()));
+        assert!(matches!(
+            app.form.as_ref().unwrap().kind,
+            FormKind::DeleteTask(42)
+        ));
+    }
+
+    #[test]
+    fn routed_navigation_waits_for_forms_and_database_work() {
+        let (mut app, _) = App::new(Err("test".into()), Screen::Dashboard);
+        let _ = app.open_form(FormKind::Task(None));
+        let _ = app.update(Message::Title("Keep this draft".into()));
+        let _ = app.update(Message::ExternalNavigate(Screen::Study));
+        assert_eq!(app.screen, Screen::Dashboard);
+        assert_eq!(app.form.as_ref().unwrap().title, "Keep this draft");
+        let _ = app.update(Message::Cancel);
+        let _ = app.update(Message::ResumeNavigation);
+        assert_eq!(app.screen, Screen::Study);
+        app.busy = true;
+        let _ = app.update(Message::ExternalNavigate(Screen::Analytics));
+        assert_eq!(app.screen, Screen::Study);
+        let _ = app.update(Message::Loaded(Err("Database operation failed".into())));
+        assert_eq!(app.screen, Screen::Analytics);
+    }
+
+    #[test]
+    fn restore_requires_confirmation_and_clears_stale_state_after_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::new(Ok(temp.path().join("test.db")), Screen::Settings);
+        app.busy = false;
+        app.data = Some(Snapshot::default());
+        let _ = app.update(Message::RestorePath("backup.db".into()));
+        let _ = app.update(Message::ConfirmRestore);
+        assert!(!app.busy);
+        let _ = app.update(Message::Restore);
+        assert!(app.restore_confirm);
+        let _ = app.update(Message::RestorePath("different.db".into()));
+        assert!(!app.restore_confirm);
+        let _ = app.update(Message::Restore);
+        let _ = app.key(
+            keyboard::Key::Named(keyboard::key::Named::Escape),
+            keyboard::Modifiers::empty(),
+        );
+        assert!(!app.restore_confirm);
+        let _ = app.update(Message::Restore);
+        let _ = app.key(
+            keyboard::Key::Named(keyboard::key::Named::F8),
+            keyboard::Modifiers::empty(),
+        );
+        assert!(app.busy && app.restoring);
+        app.selected = Some(Selection::Task(1));
+        app.study_selected = Some(1);
+        app.study_notes = Some(1);
+        let _ = app.update(Message::Loaded(Err(
+            "Restore failed; reload before continuing".into(),
+        )));
+        assert!(!app.busy && !app.restoring);
+        assert!(app.data.is_none());
+        assert!(
+            app.selected.is_none() && app.study_selected.is_none() && app.study_notes.is_none()
+        );
+        assert!(app.restore_confirm);
+        assert_eq!(app.restore_path, "different.db");
+    }
 
     #[test]
     fn completed_tasks_hide_at_six_hours_without_hiding_unknown_or_open_tasks() {
@@ -1410,6 +1669,86 @@ mod tests {
         let _ = app.update(Message::TaskDragStart(10));
         let _ = app.update(Message::TaskDragCancel);
         assert_eq!((app.drag_task, app.drop_task), (None, None));
+    }
+
+    #[test]
+    fn dashboard_navigation_stays_in_column_until_h_l_switches() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::new(Ok(temp.path().join("navigation.db")), Screen::Dashboard);
+        for action in [
+            Action::AddHabit("Read".into()),
+            Action::AddHabit("Walk".into()),
+            Action::AddTask {
+                title: "First task".into(),
+                notes: String::new(),
+                due_date: None,
+            },
+            Action::AddTask {
+                title: "Second task".into(),
+                notes: String::new(),
+                due_date: None,
+            },
+        ] {
+            let reply = iced::futures::executor::block_on(app.worker.as_ref().unwrap().request(
+                Operation::Apply(action),
+                app.date,
+                app.today,
+            ))
+            .unwrap();
+            let _ = app.update(Message::Loaded(Ok(Box::new(reply))));
+        }
+        let items = app.selections();
+        let date = app.date;
+        for (initial, key, expected) in [
+            (None, "h", Some(items[0])),
+            (None, "l", Some(items[2])),
+            (Some(items[1]), "l", Some(items[2])),
+            (Some(items[3]), "h", Some(items[0])),
+            (Some(items[1]), "h", Some(items[1])),
+            (Some(items[3]), "l", Some(items[3])),
+            (None, "j", Some(items[0])),
+            (None, "k", Some(items[0])),
+            (Some(items[0]), "k", Some(items[0])),
+            (Some(items[0]), "j", Some(items[1])),
+            (Some(items[1]), "j", Some(items[1])),
+            (Some(items[1]), "k", Some(items[0])),
+            (Some(items[2]), "k", Some(items[2])),
+            (Some(items[2]), "j", Some(items[3])),
+            (Some(items[3]), "j", Some(items[3])),
+            (Some(items[3]), "k", Some(items[2])),
+        ] {
+            app.selected = initial;
+            let _ = app.key(
+                keyboard::Key::Character(key.into()),
+                keyboard::Modifiers::empty(),
+            );
+            assert_eq!(app.selected, expected);
+            assert_eq!(app.date, date);
+            assert!(!app.busy);
+        }
+        app.selected = Some(items[1]);
+        let _ = app.open_form(FormKind::Task(None));
+        let _ = app.key(
+            keyboard::Key::Character("l".into()),
+            keyboard::Modifiers::empty(),
+        );
+        assert_eq!(app.selected, Some(items[1]));
+        let _ = app.update(Message::Cancel);
+        app.selected = Some(items[3]);
+        app.data.as_mut().unwrap().habits.clear();
+        let _ = app.key(
+            keyboard::Key::Character("h".into()),
+            keyboard::Modifiers::empty(),
+        );
+        assert_eq!(app.selected, Some(items[3]));
+        app.data.as_mut().unwrap().tasks.clear();
+        app.selected = None;
+        let _ = app.key(
+            keyboard::Key::Character("l".into()),
+            keyboard::Modifiers::empty(),
+        );
+        assert_eq!(app.selected, None);
+        assert_eq!(app.date, date);
     }
 
     #[test]
@@ -1507,7 +1846,7 @@ mod tests {
         assert!(app.selected.is_none());
     }
     #[test]
-    fn study_search_and_reschedule_require_an_unchanged_preview() {
+    fn study_reschedule_requires_an_unchanged_preview() {
         let (mut app, _) = App::new(Err("test".into()), Screen::Study);
         app.data = Some(Snapshot {
             study_topics: vec![StudyTopic {
@@ -1528,7 +1867,6 @@ mod tests {
             }],
             ..Default::default()
         });
-        let _ = app.update(Message::StudySearch("ownership".into()));
         assert_eq!(app.study_topics().len(), 1);
         let _ = app.key(
             keyboard::Key::Character("j".into()),
@@ -1611,14 +1949,6 @@ mod tests {
             app.study_reviews().iter().map(|r| r.id).collect::<Vec<_>>(),
             vec![3]
         );
-        let _ = app.update(Message::StudySearch("network".into()));
-        assert_eq!(app.study_reviews().len(), 1);
-        let _ = app.key(
-            keyboard::Key::Named(keyboard::key::Named::Escape),
-            keyboard::Modifiers::empty(),
-        );
-        assert!(app.study_search.is_empty());
-        assert_eq!(app.study_date, Some(tomorrow));
         let _ = app.key(
             keyboard::Key::Named(keyboard::key::Named::Escape),
             keyboard::Modifiers::empty(),

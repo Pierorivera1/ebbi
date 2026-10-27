@@ -13,6 +13,7 @@ pub enum Operation {
     Preview(LegacyKind, PathBuf),
     Import(ImportPreview),
     Backup(PathBuf),
+    Restore(PathBuf),
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +45,32 @@ impl Worker {
                 if matches!(request.operation, Operation::Retry) {
                     drop(database);
                     database = Database::open(&path);
+                }
+                if let Operation::Restore(source) = &request.operation {
+                    let current =
+                        std::mem::replace(&mut database, Err("Restore in progress".into()));
+                    let reply = match current {
+                        Ok(db) => {
+                            let (reopened, outcome) = db.restore(source);
+                            database = reopened;
+                            outcome.and_then(|recovery| {
+                                let db = database.as_mut().map_err(|e| e.clone())?;
+                                let mut reply =
+                                    execute(db, Operation::Refresh, request.date, request.today)?;
+                                reply.notice = Some(format!(
+                                    "Backup restored. Verified pre-restore recovery snapshot: {}",
+                                    recovery.display()
+                                ));
+                                Ok(reply)
+                            })
+                        }
+                        Err(error) => {
+                            database = Err(error.clone());
+                            Err(error)
+                        }
+                    };
+                    let _ = request.result.send(reply);
+                    continue;
                 }
                 let reply = match &mut database {
                     Ok(db) => {
@@ -113,6 +140,7 @@ fn execute(
     let mut notice = None;
     let changed = matches!(operation, Operation::Apply(_) | Operation::Import(_));
     match operation {
+        Operation::Restore(_) => return Err("Restore must run through the worker lifecycle".into()),
         Operation::Refresh | Operation::Retry => {}
         Operation::Analytics(days) => {
             analytics = Some(db.analytics(date, days, today));
@@ -146,6 +174,53 @@ fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restore_worker_refreshes_and_remains_usable_after_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("worker.db");
+        let backup = temp.path().join("backup.db");
+        let date = chrono::Local::now().date_naive();
+        let worker = Worker::start(path.clone());
+        let request =
+            |operation| iced::futures::executor::block_on(worker.request(operation, date, date));
+        request(Operation::Apply(Action::AddHabit("Original".into()))).unwrap();
+        request(Operation::Backup(backup.clone())).unwrap();
+        request(Operation::Apply(Action::AddHabit("Recent".into()))).unwrap();
+        assert!(request(Operation::Restore(path)).is_err());
+        assert_eq!(
+            request(Operation::Refresh)
+                .unwrap()
+                .snapshot
+                .unwrap()
+                .habits
+                .len(),
+            2
+        );
+        let reply = request(Operation::Restore(backup)).unwrap();
+        assert_eq!(reply.snapshot.unwrap().habits.len(), 1);
+        let notice = reply.notice.unwrap();
+        let recovery = notice.split("snapshot: ").nth(1).unwrap();
+        assert_eq!(
+            Database::open(std::path::Path::new(recovery))
+                .unwrap()
+                .snapshot(date)
+                .unwrap()
+                .habits
+                .len(),
+            2
+        );
+        request(Operation::Apply(Action::AddHabit("New".into()))).unwrap();
+        assert_eq!(
+            request(Operation::Retry)
+                .unwrap()
+                .snapshot
+                .unwrap()
+                .habits
+                .len(),
+            2
+        );
+    }
 
     #[test]
     fn storage_failure_stays_an_error_and_committed_write_is_not_reported_unsaved() {

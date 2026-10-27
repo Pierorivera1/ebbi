@@ -1,6 +1,7 @@
 mod analytics_ui;
 mod app;
 mod charts;
+mod instance;
 mod study_ui;
 mod ui;
 mod worker;
@@ -56,16 +57,36 @@ fn main() -> iced::Result {
     let path = parsed
         .0
         .map(Ok)
-        .unwrap_or_else(ebbi::persistence::default_db_path);
+        .unwrap_or_else(ebbi::persistence::default_db_path)
+        .and_then(|path| instance::database_path(&path));
+    let instance = match &path {
+        Ok(path) => match instance::Instance::start(path, parsed.1) {
+            Ok(Some(instance)) => Some(instance),
+            Ok(None) => return Ok(()),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        },
+        Err(_) => None,
+    };
     iced::application("Ebbi", App::update, ui::view)
         .subscription(App::subscription)
         .theme(|_| ui::theme())
         .window(iced::window::Settings {
             size: iced::Size::new(1100.0, 700.0),
             min_size: Some(iced::Size::new(640.0, 480.0)),
+            platform_specific: iced::window::settings::PlatformSpecific {
+                application_id: "ebbi".into(),
+                ..Default::default()
+            },
             ..Default::default()
         })
-        .run_with(move || App::new(path, parsed.1))
+        .run_with(move || {
+            let (mut app, task) = App::new(path, parsed.1);
+            app.instance = instance;
+            (app, task)
+        })
 }
 
 #[cfg(test)]

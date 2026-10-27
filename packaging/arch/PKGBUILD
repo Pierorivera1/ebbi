@@ -1,0 +1,40 @@
+# Local checkout recipe; see docs/installation.md for source snapshot creation.
+pkgname=ebbi
+pkgver=0.1.0
+pkgrel=2
+pkgdesc='Local-first habits, tasks and study planner'
+arch=('x86_64')
+url='https://github.com/Pierorivera1/ebbi'
+license=('MIT OR Apache-2.0')
+depends=('glibc' 'libgcc' 'libxkbcommon' 'wayland' 'libx11' 'libxcursor' 'libxi' 'libxrandr' 'mesa')
+makedepends=('cargo' 'pkgconf')
+checkdepends=('desktop-file-utils')
+optdepends=('xdg-desktop-portal: native file chooser'
+            'xdg-desktop-portal-gtk: file chooser backend on Hyprland'
+            'vulkan-icd-loader: Vulkan rendering with a matching GPU driver')
+options=('!debug' '!lto')
+source=("$pkgname-$pkgver.tar.gz")
+# Replaced by makepkg --geninteg in the temporary build directory.
+sha256sums=()
+
+build() {
+    cd "$srcdir/$pkgname-$pkgver"
+    export CARGO_TARGET_DIR="$srcdir/target"
+    cargo build --release --locked --offline
+}
+
+check() {
+    cd "$srcdir/$pkgname-$pkgver"
+    desktop-file-validate packaging/ebbi.desktop
+    [[ "$("$srcdir/target/release/ebbi" --version)" == "ebbi $pkgver" ]]
+    "$srcdir/target/release/ebbi" --help
+}
+
+package() {
+    cd "$srcdir/$pkgname-$pkgver"
+    install -Dm755 "$srcdir/target/release/ebbi" "$pkgdir/usr/bin/ebbi"
+    install -Dm644 packaging/ebbi.desktop "$pkgdir/usr/share/applications/ebbi.desktop"
+    install -Dm644 packaging/ebbi.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/ebbi.png"
+    install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/ebbi/LICENSE-MIT"
+    install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/ebbi/LICENSE-APACHE"
+}

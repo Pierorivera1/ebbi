@@ -1,7 +1,7 @@
 use crate::app::{App, Message};
 use crate::charts::Plot;
 use crate::ui::{action, goal_text, panel, ACCENT, MUTED};
-use ebbi::domain::{Counts, NumericGoal, PeriodComparison};
+use ebbi::domain::{Counts, NumericGoal};
 use iced::widget::{canvas, column, container, progress_bar, row, text, Space};
 use iced::{Color, Element, Length};
 
@@ -10,21 +10,6 @@ fn counts(counts: &Counts) -> String {
         Some(percent) => format!("{}/{} · {percent:.1}%", counts.successful, counts.eligible),
         None => "N/A · no known opportunities".into(),
     }
-}
-fn comparison(label: &str, comparison: &PeriodComparison) -> String {
-    format!(
-        "{label}: {} to {}: {} · prior {} to {}: {} · {}",
-        comparison.current.start,
-        comparison.current.end,
-        counts(&comparison.current.counts),
-        comparison.previous.start,
-        comparison.previous.end,
-        counts(&comparison.previous.counts),
-        comparison
-            .percentage_point_change
-            .map(|v| format!("{v:+.1} percentage points"))
-            .unwrap_or_else(|| "comparison N/A".into())
-    )
 }
 
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -57,19 +42,15 @@ pub fn view(app: &App) -> Element<'_, Message> {
             )
             .into();
     };
-    body = body
-        .push(
-            text(format!(
-                "{} — {} · {} · Today is provisional",
-                report.start,
-                report.end,
-                counts(&report.total)
-            ))
-            .color(ACCENT),
-        )
-        .push(
-            text("Daily completion · 0–100% · gaps mean N/A; unknown history is excluded").size(14),
-        );
+    body = body.push(
+        text(format!(
+            "{} — {} · {} · Today is provisional",
+            report.start,
+            report.end,
+            counts(&report.total)
+        ))
+        .color(ACCENT),
+    );
     let labels = report
         .daily
         .iter()
@@ -232,40 +213,5 @@ pub fn view(app: &App) -> Element<'_, Message> {
         }
         body = body.push(container(card).padding(14).style(panel).width(Length::Fill));
     }
-    body = body
-        .push(text("Complete-period comparisons").size(20))
-        .push(text(comparison("Week", &report.weekly)).size(13))
-        .push(text(comparison("Month", &report.monthly)).size(13));
-    let study = &report.study;
-    body=body.push(text("Study summary").size(20)).push(text(format!("{} due today · {} overdue · {} upcoming · {} completed in period",study.due,study.overdue,study.upcoming,study.completed)))
-        .push(text(format!("On time: {} · elapsed original deadlines only",counts(&study.on_time))))
-        .push(text(format!("{} unknown original deadlines excluded; {} unknown local completion dates cannot count as confirmed on time.",study.unknown_deadlines,study.unknown_completion_dates)).size(12).color(MUTED));
-    let maximum = study
-        .activity
-        .iter()
-        .map(|d| d.completed)
-        .max()
-        .unwrap_or(1)
-        .max(1) as f64;
-    body = body.push(
-        canvas(Plot {
-            series: vec![(
-                ACCENT,
-                study
-                    .activity
-                    .iter()
-                    .map(|d| Some(d.completed as f64))
-                    .collect(),
-            )],
-            labels: study
-                .activity
-                .iter()
-                .map(|d| format!("{} · {} reviews completed", d.date, d.completed))
-                .collect(),
-            maximum,
-        })
-        .width(Length::Fill)
-        .height(150),
-    );
     body.into()
 }

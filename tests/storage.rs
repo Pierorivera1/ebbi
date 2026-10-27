@@ -14,6 +14,93 @@ fn habitodo(path: &Path) -> Connection {
     c
 }
 #[test]
+fn habit_deletion_removes_binary_and_numeric_history_and_preserves_other_data() {
+    use ebbi::domain::NumericGoal;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("delete.db");
+    let today = day("2026-10-19");
+    let mut db = Database::open(&path).unwrap();
+    db.apply(Action::AddHabit("Read".into()), today).unwrap();
+    db.apply(
+        Action::AddNumericHabit {
+            name: "Walk".into(),
+            unit: "minutes".into(),
+            goal: NumericGoal::AtLeast(30.0),
+        },
+        today,
+    )
+    .unwrap();
+    db.apply(Action::AddHabit("Keep".into()), today).unwrap();
+    db.apply(
+        Action::SetHabitCompletion {
+            id: 1,
+            date: today,
+            completed: true,
+        },
+        today,
+    )
+    .unwrap();
+    db.apply(
+        Action::SetHabitValue {
+            id: 2,
+            date: today,
+            value: Some(40.0),
+        },
+        today,
+    )
+    .unwrap();
+    db.apply(
+        Action::AddTask {
+            title: "Keep task".into(),
+            notes: String::new(),
+            due_date: None,
+        },
+        today,
+    )
+    .unwrap();
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("CREATE TRIGGER block_habit_delete BEFORE DELETE ON habits WHEN OLD.id=1 BEGIN SELECT RAISE(ABORT,'blocked'); END;").unwrap();
+    assert!(db.apply(Action::DeleteHabit(1), today).is_err());
+    assert!(db.snapshot(today).unwrap().habits[0].completed);
+    conn.execute_batch("DROP TRIGGER block_habit_delete")
+        .unwrap();
+    drop(conn);
+    db.apply(Action::DeleteHabit(1), today).unwrap();
+    db.apply(Action::DeleteHabit(2), today).unwrap();
+    assert!(db.apply(Action::DeleteHabit(999), today).is_err());
+    drop(db);
+    let db = Database::open(&path).unwrap();
+    let snapshot = db.snapshot(today).unwrap();
+    assert_eq!(snapshot.habits.len(), 1);
+    assert_eq!(snapshot.habits[0].name, "Keep");
+    assert_eq!(snapshot.tasks.len(), 1);
+    let conn = Connection::open(&path).unwrap();
+    for table in [
+        "habit_entries",
+        "habit_values",
+        "habit_goals",
+        "habit_rules",
+    ] {
+        let count: i64 = conn
+            .query_row(
+                &format!("SELECT count(*) FROM {table} WHERE habit_id IN (1,2)"),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "{table}");
+    }
+    assert!(conn
+        .prepare("PRAGMA foreign_key_check")
+        .unwrap()
+        .query([])
+        .unwrap()
+        .next()
+        .unwrap()
+        .is_none());
+}
+
+#[test]
 fn daily_edits_reopen_and_reorder() {
     let t = tempfile::tempdir().unwrap();
     let p = t.path().join("ebbi.db");
@@ -393,4 +480,152 @@ fn backups_include_wal_restore_and_never_overwrite_permanent_files() {
         fs::metadata(&p).unwrap().permissions().mode() & 0o777,
         0o600
     );
+}
+
+#[test]
+fn restore_preserves_recovery_reopens_and_rejects_unsafe_sources() {
+    let t = tempfile::tempdir().unwrap();
+    let path = t.path().join("current.db");
+    let backup = t.path().join("backup.db");
+    let date = day("2026-10-15");
+    let mut db = Database::open(&path).unwrap();
+    db.apply(Action::AddHabit("Before".into()), date).unwrap();
+    db.backup(&backup).unwrap();
+    db.apply(Action::AddHabit("After".into()), date).unwrap();
+    let source_bytes = fs::read(&backup).unwrap();
+    let (reopened, restored) = db.restore(&backup);
+    let mut db = reopened.unwrap();
+    let recovery = restored.unwrap();
+    assert_eq!(db.snapshot(date).unwrap().habits.len(), 1);
+    assert_eq!(fs::read(&backup).unwrap(), source_bytes);
+    assert_eq!(
+        Database::open(&recovery)
+            .unwrap()
+            .snapshot(date)
+            .unwrap()
+            .habits
+            .len(),
+        2
+    );
+    assert!(Database::open(&path).is_err());
+    let alias = t.path().join("alias.db");
+    std::os::unix::fs::symlink(&path, &alias).unwrap();
+    assert!(Database::open(&alias).is_err());
+    let foreign = t.path().join("foreign.db");
+    drop(Database::open(&foreign).unwrap());
+    let corrupt = t.path().join("corrupt.db");
+    fs::write(&corrupt, b"not sqlite").unwrap();
+    let newer = t.path().join("newer.db");
+    fs::copy(&backup, &newer).unwrap();
+    Connection::open(&newer)
+        .unwrap()
+        .execute_batch("PRAGMA user_version=99")
+        .unwrap();
+    let live = Database::open(&backup).unwrap();
+    for source in [&path, &alias, &foreign, &corrupt, &newer, &backup] {
+        let (opened, outcome) = db.restore(source);
+        db = opened.unwrap();
+        assert!(outcome.is_err(), "{}", source.display());
+        assert_eq!(db.snapshot(date).unwrap().habits.len(), 1);
+    }
+    drop(live);
+    let sidecar = t.path().join("backup.db-wal");
+    fs::write(&sidecar, b"untrusted WAL").unwrap();
+    let (opened, outcome) = db.restore(&backup);
+    db = opened.unwrap();
+    assert!(outcome.is_err());
+    assert_eq!(fs::read(&sidecar).unwrap(), b"untrusted WAL");
+    db.apply(Action::AddHabit("Still writable".into()), date)
+        .unwrap();
+    drop(db);
+    assert_eq!(
+        Database::open(&path)
+            .unwrap()
+            .snapshot(date)
+            .unwrap()
+            .habits
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn restore_reader_failure_preserves_current_data_and_recovery() {
+    let t = tempfile::tempdir().unwrap();
+    let path = t.path().join("current.db");
+    let backup = t.path().join("backup.db");
+    let date = day("2026-10-15");
+    let mut db = Database::open(&path).unwrap();
+    db.apply(Action::AddHabit("Original".into()), date).unwrap();
+    db.backup(&backup).unwrap();
+    db.apply(Action::AddHabit("Recent".into()), date).unwrap();
+    let reader = Connection::open(&path).unwrap();
+    reader
+        .execute_batch("BEGIN; SELECT * FROM habits;")
+        .unwrap();
+    let (reopened, outcome) = db.restore(&backup);
+    let mut db = reopened.unwrap();
+    assert!(outcome.is_err());
+    assert_eq!(db.snapshot(date).unwrap().habits.len(), 2);
+    let recovery = fs::read_dir(t.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            p.to_string_lossy().contains("pre-restore") && p.extension().is_some_and(|e| e == "db")
+        })
+        .unwrap();
+    assert_eq!(
+        Database::open(&recovery)
+            .unwrap()
+            .snapshot(date)
+            .unwrap()
+            .habits
+            .len(),
+        2
+    );
+    drop(reader);
+    db.apply(Action::AddHabit("Usable".into()), date).unwrap();
+    let (reopened, outcome) = db.restore(&backup);
+    assert!(outcome.is_ok());
+    assert_eq!(reopened.unwrap().snapshot(date).unwrap().habits.len(), 1);
+}
+
+#[test]
+fn restore_validates_and_migrates_private_v1_candidate() {
+    let t = tempfile::tempdir().unwrap();
+    let path = t.path().join("current.db");
+    let backup = t.path().join("v1.db");
+    let date = day("2026-10-15");
+    let db = Database::open(&path).unwrap();
+    let id: String = Connection::open(&path)
+        .unwrap()
+        .query_row(
+            "SELECT value FROM settings WHERE key='database_id'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let old = Connection::open(&backup).unwrap();
+    old.execute_batch(include_str!("../src/persistence/schema.sql"))
+        .unwrap();
+    old.execute("UPDATE settings SET value=?1 WHERE key='database_id'", [id])
+        .unwrap();
+    old.execute_batch("INSERT INTO tasks(title,notes,created_at,position) VALUES('V1 task','retained','2026-10-15T00:00:00Z',0)").unwrap();
+    drop(old);
+    let before = fs::read(&backup).unwrap();
+    let (reopened, outcome) = db.restore(&backup);
+    assert!(outcome.is_ok());
+    assert_eq!(
+        reopened.unwrap().snapshot(date).unwrap().tasks[0].title,
+        "V1 task"
+    );
+    assert_eq!(fs::read(&backup).unwrap(), before);
+    assert!(!fs::read_dir(t.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .any(|e| e
+            .file_name()
+            .to_string_lossy()
+            .contains("restore-candidate")));
 }

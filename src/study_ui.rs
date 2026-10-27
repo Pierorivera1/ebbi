@@ -1,8 +1,8 @@
 use crate::app::{App, FormKind, Message};
 use ebbi::domain::{Action, StudyReview, StudyTopic};
 use iced::widget::{
-    button, checkbox, column, container, markdown, mouse_area, rich_text, row, span, text,
-    text_input, tooltip, Space,
+    button, checkbox, column, container, markdown, mouse_area, rich_text, row, span, text, tooltip,
+    Space,
 };
 use iced::{Alignment, Border, Color, Element, Font, Length, Theme};
 
@@ -78,33 +78,6 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .color(MUTED)
     ]
     .spacing(4);
-    let search = text_input("Search (/)", &app.study_search)
-        .font(Font::MONOSPACE)
-        .id("study-search")
-        .on_input_maybe(app.form.is_none().then_some(Message::StudySearch))
-        .padding(10)
-        .style(|theme, status| {
-            let mut style = text_input::default(theme, status);
-            style.background = Color::TRANSPARENT.into();
-            style.border = Border {
-                color: if status == text_input::Status::Focused {
-                    INK
-                } else {
-                    EDGE
-                },
-                width: 1.0,
-                radius: 8.0.into(),
-            };
-            style.value = INK;
-            style.placeholder = MUTED;
-            style
-        })
-        .size(13)
-        .width(if app.width >= 900.0 {
-            Length::Fixed(230.0)
-        } else {
-            Length::Fill
-        });
     let add = button(text("+ Add Topic").font(Font::MONOSPACE).size(13))
         .padding([7, 18])
         .on_press_maybe(ready.then_some(Message::OpenForm(FormKind::Study(None))))
@@ -125,17 +98,11 @@ pub fn view(app: &App) -> Element<'_, Message> {
             ..Default::default()
         });
     let mut body = column![].spacing(6);
-    if app.width >= 900.0 {
-        body = body.push(
-            row![heading, Space::with_width(Length::Fill), search, add]
-                .spacing(16)
-                .align_y(Alignment::Center),
-        );
-    } else {
-        body = body
-            .push(heading)
-            .push(row![search, add].spacing(12).align_y(Alignment::Center));
-    }
+    body = body.push(
+        row![heading, Space::with_width(Length::Fill), add]
+            .spacing(16)
+            .align_y(Alignment::Center),
+    );
     let mut start = app.today;
     if let Some(date) = app.study_date {
         if date < app.today {
@@ -267,14 +234,10 @@ pub fn view(app: &App) -> Element<'_, Message> {
     let reviews = app.study_reviews();
     if reviews.is_empty() {
         body = body.push(
-            text(if app.study_search.trim().is_empty() {
-                "No reviews here. Press N to add a topic, or choose another day."
-            } else {
-                "No matching reviews."
-            })
-            .font(Font::MONOSPACE)
-            .size(13)
-            .color(MUTED),
+            text("No reviews here. Press N to add a topic, or choose another day.")
+                .font(Font::MONOSPACE)
+                .size(13)
+                .color(MUTED),
         );
     }
     let topics: std::collections::BTreeMap<_, _> = app

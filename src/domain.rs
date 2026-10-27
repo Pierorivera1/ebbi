@@ -80,6 +80,7 @@ pub enum Action {
         date: NaiveDate,
     },
     AddHabit(String),
+    DeleteHabit(i64),
     RenameHabit {
         id: i64,
         name: String,

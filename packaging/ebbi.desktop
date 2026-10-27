@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Name=Ebbi
+Comment=Track habits, tasks and study reviews locally
+Exec=ebbi --view=dashboard
+TryExec=ebbi
+Icon=ebbi
+Terminal=false
+Categories=Office;
+Keywords=habits;tasks;study;reviews;productivity;
+Actions=Study;Analytics;
+
+[Desktop Action Study]
+Name=Study
+Exec=ebbi --view=study
+
+[Desktop Action Analytics]
+Name=Analytics
+Exec=ebbi --view=analytics
