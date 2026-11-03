@@ -8,14 +8,20 @@ use iced::{Alignment, Border, Color, Element, Length, Theme};
 
 pub(crate) const MUTED: Color = Color::from_rgb(0.65, 0.70, 0.73);
 pub(crate) const ACCENT: Color = Color::from_rgb(0.52, 0.87, 0.72);
-const ERROR: Color = Color::from_rgb(1.0, 0.64, 0.61);
+pub(crate) const INK: Color = Color::from_rgb(0.91, 0.94, 0.94);
+pub(crate) const ERROR: Color = Color::from_rgb(1.0, 0.64, 0.61);
+pub(crate) const DATE_SIZE: u16 = 24;
+pub(crate) const HEADING_SIZE: u16 = 20;
+pub(crate) const ROW_SIZE: u16 = 17;
+pub(crate) const CONTROL_SIZE: u16 = 13;
+pub(crate) const META_SIZE: u16 = 12;
 
 pub fn theme() -> Theme {
     Theme::custom(
         "Ebbi dark".into(),
         iced::theme::Palette {
             background: Color::from_rgb(0.055, 0.071, 0.082),
-            text: Color::from_rgb(0.91, 0.94, 0.94),
+            text: INK,
             primary: ACCENT,
             success: ACCENT,
             danger: ERROR,
@@ -40,7 +46,7 @@ pub(crate) fn action<'a>(
     message: Message,
     enabled: bool,
 ) -> iced::widget::Button<'a, Message> {
-    button(text(label.into()).size(13))
+    button(text(label.into()).size(CONTROL_SIZE))
         .style(button::secondary)
         .padding([7, 10])
         .on_press_maybe(enabled.then_some(message))
@@ -49,7 +55,7 @@ pub(crate) fn action<'a>(
 pub fn view(app: &App) -> Element<'_, Message> {
     let ready = app.data.is_some();
     let header = row![
-        text("E B B I").size(20).color(ACCENT),
+        text("E B B I").size(HEADING_SIZE).color(ACCENT),
         Space::with_width(Length::Fill),
         action("Today", Message::Navigate(Screen::Dashboard), !app.busy),
         action("Study", Message::Navigate(Screen::Study), !app.busy),
@@ -58,11 +64,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     ]
     .spacing(10)
     .align_y(Alignment::Center);
-    let mut body = if app.screen == Screen::Study {
-        column![]
-    } else {
-        column![header, horizontal_rule(1)]
-    };
+    let mut body = column![header, horizontal_rule(1)];
     body = body.spacing(12).padding([12, 24]).width(Length::Fill);
     if let Some(error) = &app.error {
         body = body.push(
@@ -124,43 +126,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
     } else {
         "j/k select within column · h habits / l tasks · Up/Down move task · i add task · Enter edit · d delete · Space complete · t today · a habit"
     };
-    let hint = text(footer)
-        .font(if app.screen == Screen::Study {
-            iced::Font::MONOSPACE
-        } else {
-            iced::Font::DEFAULT
-        })
-        .size(10)
-        .color(MUTED);
-    let bottom: Element<'_, Message> = if app.screen == Screen::Study {
-        let nav = row![
-            button(text("F1 Today").font(iced::Font::MONOSPACE).size(9))
-                .style(button::text)
-                .on_press(Message::Navigate(Screen::Dashboard)),
-            button(text("F3 Analytics").font(iced::Font::MONOSPACE).size(9))
-                .style(button::text)
-                .on_press(Message::Navigate(Screen::Analytics)),
-            button(text("Settings").font(iced::Font::MONOSPACE).size(9))
-                .style(button::text)
-                .on_press(Message::Navigate(Screen::Settings)),
-        ]
-        .spacing(6);
-        if app.width >= 900.0 {
-            row![hint.width(Length::Fill), nav]
-                .spacing(10)
-                .align_y(Alignment::Center)
-                .into()
-        } else {
-            column![hint, nav].spacing(4).into()
-        }
-    } else {
-        hint.into()
-    };
+    let hint = text(footer).size(10).color(MUTED);
     let base: Element<'_, Message> = column![
         scrollable(body)
             .id(iced::widget::scrollable::Id::new("main-scroll"))
             .height(Length::Fill),
-        container(bottom).padding([10, 24]).width(Length::Fill)
+        container(hint).padding([10, 24]).width(Length::Fill)
     ]
     .width(Length::Fill)
     .height(Length::Fill)
@@ -197,7 +168,7 @@ fn dashboard(app: &App, ready: bool) -> Element<'_, Message> {
     let date = row![
         action("‹", Message::DateStep(-1), true),
         text(app.date.format("%A").to_string())
-            .size(24)
+            .size(DATE_SIZE)
             .color(ACCENT),
         text_input("YYYY-MM-DD", &app.date_input)
             .on_input(Message::DateInput)
@@ -246,7 +217,7 @@ fn dashboard(app: &App, ready: bool) -> Element<'_, Message> {
 }
 
 fn habit_list(app: &App, ready: bool) -> Element<'_, Message> {
-    let mut list = column![text("Daily habits").size(20)].spacing(12);
+    let mut list = column![text("Daily habits").size(HEADING_SIZE)].spacing(12);
     let data = app.data.as_ref().expect("dashboard checked data");
     let habits: Vec<_> = data
         .habits
@@ -321,7 +292,7 @@ fn habit_list(app: &App, ready: bool) -> Element<'_, Message> {
                     if selected { "› " } else { "" },
                     habit.name
                 ))
-                .size(17)
+                .size(ROW_SIZE)
             )
             .on_press_maybe(ready.then_some(Message::Select(Selection::Habit(habit.id))))
             .padding([7, 10])
@@ -354,7 +325,7 @@ fn task_title_input<'a>(app: &App, title: &'a str) -> Element<'a, Message> {
 }
 
 fn task_list(app: &App, ready: bool) -> Element<'_, Message> {
-    let mut list = column![text("Tasks").size(20)].spacing(12);
+    let mut list = column![text("Tasks").size(HEADING_SIZE)].spacing(12);
     if let Some(form) = app
         .form
         .as_ref()
@@ -407,7 +378,7 @@ fn task_list(app: &App, ready: bool) -> Element<'_, Message> {
                 if selected { "› " } else { "" },
                 task.title
             ))
-            .size(17)
+            .size(ROW_SIZE)
             .width(Length::Fill)
         ]
         .spacing(8)

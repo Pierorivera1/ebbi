@@ -35,7 +35,7 @@ The project combines the workflows of [Habit Tracker](https://github.com/Pierori
 
 ## Screenshots
 
-Captured from the native app on Omarchy / Wayland. All names, tasks, and history shown here are synthetic demonstration data.
+Captured from an earlier version of the native app on Omarchy / Wayland. The Study layout has since changed. All names, tasks, and history shown here are synthetic demonstration data.
 
 ### Study agenda
 
@@ -104,7 +104,7 @@ instance.
 | `H` / `L` | Dashboard: select habits / tasks; Study: move between dates |
 | `Space` | Toggle completion or enter a numeric value |
 | `Enter` | Edit the selected item or save a form |
-| `Esc` | Cancel a form or clear Study filters |
+| `Esc` | Cancel a form, then clear Study search or the selected date |
 | `PageUp` / `PageDown` | Scroll the main view |
 
 See the [user guide](docs/usage.md) for habit creation, task controls, review rescheduling, imports, and recovery instructions.
@@ -202,6 +202,8 @@ Archiving a habit keeps its history; confirming deletion removes the habit and i
 binary and numeric history. Create a backup before deleting data you may need.
 
 ## Development
+
+The owner has prohibited running Rust tests and commands that invoke them until explicitly lifting the restriction. The commands below include tests for future use; do not run them while the restriction remains in effect.
 
 ```sh
 cargo fmt --all -- --check

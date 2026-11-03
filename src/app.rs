@@ -89,9 +89,6 @@ pub enum Message {
     Bound(String),
     Upper(String),
     StudyDay(Option<NaiveDate>),
-    HoverReview(Option<i64>),
-    ToggleReviewNotes(i64),
-    SnoozeReview(i64),
     SelectReview(i64),
     PreviewNotes,
     Link(String),
@@ -142,8 +139,6 @@ pub enum Message {
 pub struct App {
     pub screen: Screen,
     pub study_date: Option<NaiveDate>,
-    pub study_hovered: Option<i64>,
-    pub study_notes: Option<i64>,
     pub study_selected: Option<i64>,
     pub markdown: Vec<iced::widget::markdown::Item>,
     pub analytics: Option<AnalyticsReport>,
@@ -196,8 +191,6 @@ impl App {
         let mut app = Self {
             screen,
             study_date: None,
-            study_hovered: None,
-            study_notes: None,
             study_selected: None,
             markdown: Vec::new(),
             analytics: None,
@@ -312,8 +305,6 @@ impl App {
                             self.preview = None;
                             self.selected = None;
                             self.study_selected = None;
-                            self.study_hovered = None;
-                            self.study_notes = None;
                             self.drag_task = None;
                             self.drop_task = None;
                         }
@@ -389,8 +380,6 @@ impl App {
                             self.preview = None;
                             self.selected = None;
                             self.study_selected = None;
-                            self.study_hovered = None;
-                            self.study_notes = None;
                             self.drag_task = None;
                             self.drop_task = None;
                         }
@@ -446,7 +435,6 @@ impl App {
                 self.study_date = date;
                 self.study_selected = self.study_reviews().first().map(|r| r.id);
             }
-            Message::HoverReview(id) => self.study_hovered = id,
             Message::SelectReview(id) => self.study_selected = Some(id),
             Message::InspectDay(index) => self.inspected_day = index,
             Message::Link(url) => self.notice = Some(format!("Link: {url}")),
@@ -544,31 +532,6 @@ impl App {
             }
             Message::ResumeNavigation => {}
             _ if self.busy => {}
-            Message::SnoozeReview(id) => {
-                if let Some(review) = self.data.as_ref().and_then(|d| {
-                    d.study_reviews
-                        .iter()
-                        .find(|r| r.id == id && r.completed_at.is_none())
-                }) {
-                    if let Some(date) = review.scheduled_date.succ_opt() {
-                        return self.run(Operation::Apply(Action::RescheduleReview { id, date }));
-                    }
-                    self.error = Some("Review date is out of range.".into());
-                }
-            }
-            Message::ToggleReviewNotes(id) => {
-                if self.study_notes == Some(id) {
-                    self.study_notes = None;
-                } else if let Some(topic) = self.data.as_ref().and_then(|d| {
-                    d.study_reviews
-                        .iter()
-                        .find(|r| r.id == id)
-                        .and_then(|r| d.study_topics.iter().find(|t| t.id == r.topic_id))
-                }) {
-                    self.markdown = iced::widget::markdown::parse(&topic.notes).collect();
-                    self.study_notes = Some(id);
-                }
-            }
             Message::OpenForm(kind) => return self.open_form(kind),
             Message::PreviewNotes => {
                 if let Some(form) = &self.form {
@@ -757,7 +720,6 @@ impl App {
     fn open_form(&mut self, kind: FormKind) -> Task<Message> {
         self.drag_task = None;
         self.drop_task = None;
-        self.study_notes = None;
         let mut form = Form {
             kind: kind.clone(),
             title: String::new(),
@@ -1580,15 +1542,12 @@ mod tests {
         assert!(app.busy && app.restoring);
         app.selected = Some(Selection::Task(1));
         app.study_selected = Some(1);
-        app.study_notes = Some(1);
         let _ = app.update(Message::Loaded(Err(
             "Restore failed; reload before continuing".into(),
         )));
         assert!(!app.busy && !app.restoring);
         assert!(app.data.is_none());
-        assert!(
-            app.selected.is_none() && app.study_selected.is_none() && app.study_notes.is_none()
-        );
+        assert!(app.selected.is_none() && app.study_selected.is_none());
         assert!(app.restore_confirm);
         assert_eq!(app.restore_path, "different.db");
     }

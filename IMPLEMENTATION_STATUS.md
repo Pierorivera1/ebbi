@@ -1,5 +1,19 @@
 # Ebbi implementation status
 
+## Study date-filter label removed, 2026-11-03
+
+Removed the Viewing date message and Show all button. Click the selected day again or press Esc to clear the date filter. The release build succeeded and the updated package was installed. No tests were run.
+
+## Study hover controls removed, 2026-11-03
+
+Removed the review hover action strip and study-date tooltip. Right-click editing and keyboard shortcuts remain available. The release build succeeded and the updated package was installed. No tests were run.
+
+## Shared Dashboard and Study styling, 2026-11-03
+
+Study now uses Dashboard's shared EBBI header, horizontal divider and top navigation. Removed the separate bottom-right Today/Analytics/Settings links and the Study-only monospace font, muted palette, checkbox overrides and pill-shaped add button. Both views use the same regular sans-serif font, 24 logical-pixel weekday, 20-pixel headings, 17-pixel row titles and 13-pixel buttons. Shared sizes, palette, panel and action helpers keep the styles aligned. Review groups use the same 16-pixel panel padding, 12-pixel row padding/spacing and 12-pixel rounded borders as Dashboard. Stage/date/overdue metadata, completed strikethrough and existing study actions remain available.
+
+Formatting, strict all-target Clippy, all 34 existing tests and a locked offline release build passed. Native Wayland checks with temporary synthetic data covered 1200×726 and 640×480 logical-pixel layouts, F1/F2 navigation, review completion/undo, day filtering and topic-dialog opening/cancellation. Queried Iced's font database using the locked renderer dependencies: the default sans-serif resolves to Nimbus Sans Narrow, normal style/weight 400, on this machine. Font resolution can differ on other systems. Evidence: `/tmp/ebbi-style-PUhHAwj0/`. Personal and legacy databases were not opened or modified. The owner requested no further tests after the runs above completed. The subsequent package build was stopped before its check stage. Packaged the already-built release with makepkg --repackage --nocheck, without rebuilding or running package checks. Package: /tmp/ebbi-style-PUhHAwj0/package/ebbi-0.1.0-2-x86_64.pkg.tar.zst. At the owner's request, installed the updated local package through pkexec pacman -U on 2026-11-03. Pacman completed successfully and refreshed icon/desktop caches. The installed executable matches the prepared package. Reopen Ebbi to load the new UI. No further tests were run.
+
 ## Confirmed habit deletion — 2026-10-19
 
 On Dashboard, `d` now opens a compact modal for the selected habit: “Do you want to delete a habit?” with its name and Yes/No buttons. Yes or `y` deletes the habit and its binary/numeric history; No, `n`, or Escape cancels. Repeated `d` and unfocused Enter do not confirm. Task deletion keeps its existing confirmation. All habit child records and the habit are deleted in one transaction through the database worker; write failures retain the form and report the error.
