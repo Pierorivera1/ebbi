@@ -23,7 +23,7 @@ The project combines the workflows of [Habit Tracker](https://github.com/Pierori
 
 ## Architecture
 
-![Ebbi architecture: two offline SQLite workspaces exchange snapshots manually through a private S3 bucket](docs/screenshots/architecture.png)
+![Ebbi architecture: two offline SQLite workspaces exchange snapshots manually through a private S3 bucket](docs/screenshots/ebbi-stack-diagram.png)
 
 Each device saves to its own SQLite database. Optional sync uses the AWS SDK on the database worker, serialized with local writes. Devices communicate through S3; neither device needs to remain on for the other to pull an already published snapshot.
 
