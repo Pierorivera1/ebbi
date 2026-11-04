@@ -700,6 +700,147 @@ fn settings(app: &App, ready: bool) -> Element<'_, Message> {
             row![action("Confirm restore [F8]", Message::ConfirmRestore, ready && !app.busy), action("Cancel", Message::CancelRestore, !app.busy)].spacing(8)
         ].spacing(10)).padding(16).style(panel));
     }
+    content = content
+        .push(horizontal_rule(1))
+        .push(text("Sync between devices").size(20))
+        .push(
+            text("Pull before editing on another device. Push before switching devices.")
+                .size(13)
+                .color(MUTED),
+        )
+        .push(
+            text("Ctrl+Shift+Up: Push · Ctrl+Shift+Down: Pull")
+                .size(13)
+                .color(MUTED),
+        );
+    if !app.sync_paired && !app.sync_pending {
+        content = content
+            .push(text("AWS profile").size(13))
+            .push(
+                text_input("AWS profile", &app.sync_profile)
+                    .on_input(Message::SyncProfile)
+                    .padding(10),
+            )
+            .push(text("S3 bucket name").size(13))
+            .push(
+                text_input("Bucket name", &app.sync_bucket)
+                    .on_input(Message::SyncBucket)
+                    .padding(10),
+            )
+            .push(text("AWS region").size(13))
+            .push(
+                text_input("Region", &app.sync_region)
+                    .on_input(Message::SyncRegion)
+                    .padding(10),
+            )
+            .push(text("AWS account ID").size(13))
+            .push(
+                text_input("12-digit account ID", &app.sync_owner)
+                    .on_input(Message::SyncOwner)
+                    .padding(10),
+            )
+            .push(
+                text("The AWS key stays in your local profile. Do not enter it here.")
+                    .size(13)
+                    .color(MUTED),
+            )
+            .push(action(
+                "Save sync settings",
+                Message::SyncSave,
+                ready && !app.busy,
+            ));
+    } else {
+        content = content.push(
+            text(format!(
+                "Bucket: {} · Region: {} · Profile: {}",
+                app.sync_bucket, app.sync_region, app.sync_profile
+            ))
+            .size(13)
+            .color(MUTED),
+        );
+    }
+    let status = if app.sync_dirty {
+        "Save sync settings before connecting."
+    } else if app.sync_pending {
+        "A previous sync needs recovery."
+    } else if !app.sync_configured {
+        "Sync is not configured on this device."
+    } else if !app.sync_paired {
+        "This device is not paired yet."
+    } else {
+        match app.sync_changes {
+            Some(ebbi::sync::LocalChanges::Unchanged) => "No unpublished local changes.",
+            Some(ebbi::sync::LocalChanges::Changed) => "Local changes have not been pushed.",
+            Some(ebbi::sync::LocalChanges::DifferentWorkspace) => {
+                "This workspace differs from the paired workspace."
+            }
+            _ => "Sync status is unavailable.",
+        }
+    };
+    content = content.push(text(status).size(14));
+    if let Some(time) = &app.sync_last_success {
+        let local = chrono::DateTime::parse_from_rfc3339(time)
+            .ok()
+            .map(|t| {
+                t.with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string()
+            })
+            .unwrap_or_else(|| time.clone());
+        content = content.push(
+            text(format!("Last recorded sync: {local}"))
+                .size(13)
+                .color(MUTED),
+        );
+    }
+    content = content.push(
+        row![
+            action(
+                "Check connection",
+                Message::SyncCheckConnection,
+                ready && app.sync_configured && !app.sync_dirty && !app.busy
+            ),
+            action("Refresh status", Message::SyncStatus, ready && !app.busy)
+        ]
+        .spacing(8),
+    );
+    if app.sync_pending {
+        content = content.push(action(
+            "Recover interrupted sync",
+            Message::SyncRecover,
+            ready && !app.busy,
+        ));
+    } else if app.sync_configured && !app.sync_paired && !app.sync_dirty {
+        content = content.push(text("Choose the device with your starting data first. Joining replaces this device's workspace after saving a recovery backup.").size(13).color(MUTED))
+            .push(row![action("Publish starting workspace…", Message::SyncInitial, ready && !app.busy), action("Join cloud workspace…", Message::SyncPreviewJoin, ready && !app.busy)].spacing(8));
+    } else if app.sync_paired {
+        content = content.push(
+            row![
+                action("Push changes", Message::SyncPush, ready && !app.busy),
+                action("Pull changes", Message::SyncPull, ready && !app.busy)
+            ]
+            .spacing(8),
+        );
+    }
+    if app.sync_initial_confirm {
+        content = content.push(container(column![
+            text("Publish this workspace as the starting copy?").size(18),
+            text("Ebbi will save a local backup and publish only if the cloud workspace is empty.").size(13),
+            row![action("Confirm publication", Message::SyncConfirmInitial, ready && !app.busy), action("Cancel", Message::SyncCancel, !app.busy)].spacing(8)
+        ].spacing(10)).padding(16).style(panel));
+    }
+    if let Some(preview) = &app.sync_join_preview {
+        let local_summary = app.data.as_ref().map(|data| format!("This device currently shows {} tasks, {} habits, {} study topics and {} reviews.", data.tasks.len(), data.habits.len(), data.study_topics.len(), data.study_reviews.len())).unwrap_or_default();
+        content = content.push(container(column![
+            text("Replace this device's workspace?").size(18).color(ERROR),
+            text(format!("Cloud workspace: {}", preview.head.workspace_id)).size(13),
+            text(format!("Cloud contains {} tasks, {} habits, {} study topics and {} reviews.", preview.cloud_tasks, preview.cloud_habits, preview.cloud_topics, preview.cloud_reviews)).size(13),
+            text(format!("This device: {}", preview.local_workspace_id)).size(13),
+            text(local_summary).size(13),
+            text("This replaces local tasks, habits, study data and history with the cloud copy. Ebbi keeps a verified backup of the current workspace. Data is not merged.").size(13),
+            row![action("Confirm join", Message::SyncConfirmJoin, ready && !app.busy), action("Cancel", Message::SyncCancel, !app.busy)].spacing(8)
+        ].spacing(10)).padding(16).style(panel));
+    }
     content = content.push(horizontal_rule(1)).push(column![text("Import legacy history").size(20),text("Choose a source and inspect a verified snapshot before importing. Existing apps keep their own databases.").size(13).color(MUTED),
         row![action("Habit Tracker [F5]",Message::SourceKind(LegacyKind::Habitodo),!app.busy),action("Repasito [F6]",Message::SourceKind(LegacyKind::Repasito),!app.busy)].spacing(8),
         text(format!("Source: {}",app.source_kind)).size(13),text_input("Path to legacy SQLite database",&app.source_path).on_input(Message::SourcePath).on_submit(Message::Preview).padding(10),row![action("Browse…",Message::BrowseSource,!app.busy),action("Preview import",Message::Preview,ready && !app.source_path.trim().is_empty())].spacing(8)].spacing(14));

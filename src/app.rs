@@ -1,9 +1,11 @@
+use crate::sync_worker::{self, SyncAction, SyncConfig, SyncRequest};
 use crate::worker::{Operation, Reply, Worker};
 use chrono::{Local, NaiveDate};
 use ebbi::domain::{
     Action, AnalyticsReport, HabitKind, ImportPreview, LegacyKind, NumericGoal, Snapshot,
     StudyReview, StudyTopic, Todo,
 };
+use ebbi::sync::{engine::JoinPreview, LocalChanges};
 use iced::{event, keyboard, window, Event, Subscription, Task};
 use std::path::PathBuf;
 
@@ -130,6 +132,21 @@ pub enum Message {
     Restore,
     ConfirmRestore,
     CancelRestore,
+    SyncProfile(String),
+    SyncBucket(String),
+    SyncRegion(String),
+    SyncOwner(String),
+    SyncSave,
+    SyncStatus,
+    SyncCheckConnection,
+    SyncInitial,
+    SyncConfirmInitial,
+    SyncPreviewJoin,
+    SyncConfirmJoin,
+    SyncCancel,
+    SyncPush,
+    SyncPull,
+    SyncRecover,
     BrowseSource,
     BrowseBackup,
     PickedPath(bool, Option<PathBuf>),
@@ -163,6 +180,18 @@ pub struct App {
     pub backup_path: String,
     pub restore_path: String,
     pub restore_confirm: bool,
+    pub sync_profile: String,
+    pub sync_bucket: String,
+    pub sync_region: String,
+    pub sync_owner: String,
+    pub sync_configured: bool,
+    pub sync_dirty: bool,
+    pub sync_paired: bool,
+    pub sync_pending: bool,
+    pub sync_changes: Option<LocalChanges>,
+    pub sync_last_success: Option<String>,
+    pub sync_initial_confirm: bool,
+    pub sync_join_preview: Option<JoinPreview>,
     pending_screen: Option<Screen>,
     restoring: bool,
     worker: Option<Worker>,
@@ -214,6 +243,18 @@ impl App {
             backup_path,
             restore_path: String::new(),
             restore_confirm: false,
+            sync_profile: "ebbi-sync".into(),
+            sync_bucket: String::new(),
+            sync_region: "us-east-1".into(),
+            sync_owner: String::new(),
+            sync_configured: false,
+            sync_dirty: false,
+            sync_paired: false,
+            sync_pending: false,
+            sync_changes: None,
+            sync_last_success: None,
+            sync_initial_confirm: false,
+            sync_join_preview: None,
             instance: None,
             pending_screen: None,
             restoring: false,
@@ -221,11 +262,15 @@ impl App {
             worker,
             close_form_after_save: false,
         };
-        let task = app.run(if screen == Screen::Analytics {
-            Operation::Analytics(30)
+        let task = if screen == Screen::Settings {
+            app.sync_run(SyncAction::Status)
         } else {
-            Operation::Refresh
-        });
+            app.run(if screen == Screen::Analytics {
+                Operation::Analytics(30)
+            } else {
+                Operation::Refresh
+            })
+        };
         (app, task)
     }
 
@@ -259,11 +304,49 @@ impl App {
         let Some(worker) = &self.worker else {
             return Task::none();
         };
+        if matches!(
+            operation,
+            Operation::Apply(_) | Operation::Import(_) | Operation::Restore(_)
+        ) {
+            self.sync_changes = None;
+        }
         self.busy = true;
         self.error = None;
         Task::perform(worker.request(operation, self.date, self.today), |reply| {
             Message::Loaded(reply.map(Box::new))
         })
+    }
+
+    fn sync_run(&mut self, action: SyncAction) -> Task<Message> {
+        let path = match &self.db_path {
+            Ok(path) => path,
+            Err(error) => {
+                self.error = Some(error.clone());
+                return Task::none();
+            }
+        };
+        let (state_path, scratch_dir) = match sync_worker::paths(path) {
+            Ok(paths) => paths,
+            Err(error) => {
+                self.error = Some(error);
+                return Task::none();
+            }
+        };
+        if matches!(
+            action,
+            SyncAction::Initial
+                | SyncAction::Join(_)
+                | SyncAction::Push
+                | SyncAction::Pull
+                | SyncAction::Recover
+        ) {
+            self.restoring = true;
+        }
+        self.run(Operation::Sync(SyncRequest {
+            action,
+            state_path,
+            scratch_dir,
+        }))
     }
 
     pub fn tasks(&self) -> Vec<&Todo> {
@@ -307,6 +390,26 @@ impl App {
                             self.study_selected = None;
                             self.drag_task = None;
                             self.drop_task = None;
+                        }
+                        if let Some(report) = reply.sync {
+                            self.sync_initial_confirm = false;
+                            self.sync_join_preview = report.preview;
+                            self.sync_configured = report.state.is_some();
+                            self.sync_dirty = false;
+                            self.sync_changes = report.changes;
+                            if let Some(state) = report.state {
+                                self.sync_profile = state.profile;
+                                self.sync_bucket = state.bucket;
+                                self.sync_region = state.region;
+                                self.sync_owner = state.expected_bucket_owner;
+                                self.sync_paired = state.accepted.is_some();
+                                self.sync_pending = state.pending.is_some();
+                                self.sync_last_success = state.last_success;
+                            } else {
+                                self.sync_paired = false;
+                                self.sync_pending = false;
+                                self.sync_last_success = None;
+                            }
                         }
                         let is_analytics = reply.analytics.is_some();
                         if let Some(report) = reply.analytics {
@@ -384,6 +487,8 @@ impl App {
                             self.drop_task = None;
                         }
                         self.restoring = false;
+                        self.sync_initial_confirm = false;
+                        self.sync_join_preview = None;
                         self.error = Some(error);
                         self.close_form_after_save = false;
                     }
@@ -478,6 +583,8 @@ impl App {
                 if !self.busy
                     && self.form.is_none()
                     && !self.restore_confirm
+                    && !self.sync_initial_confirm
+                    && self.sync_join_preview.is_none()
                     && self.preview.is_none()
                 {
                     if let Some(screen) = self.pending_screen.take() {
@@ -522,6 +629,8 @@ impl App {
                 if self.busy
                     || self.form.is_some()
                     || self.restore_confirm
+                    || self.sync_initial_confirm
+                    || self.sync_join_preview.is_some()
                     || self.preview.is_some()
                 {
                     self.pending_screen = Some(screen);
@@ -549,11 +658,15 @@ impl App {
                 }
                 self.screen = screen;
                 self.restore_confirm = false;
+                self.sync_initial_confirm = false;
+                self.sync_join_preview = None;
                 self.form = None;
                 self.selected = None;
                 self.drag_task = None;
                 self.drop_task = None;
-                let task = if screen == Screen::Analytics {
+                let task = if screen == Screen::Settings {
+                    self.sync_run(SyncAction::Status)
+                } else if screen == Screen::Analytics {
                     self.analytics = None;
                     self.run(Operation::Analytics(self.analytics_days))
                 } else {
@@ -708,8 +821,75 @@ impl App {
                     self.restore_confirm = false;
                 }
             }
+            Message::SyncProfile(value) => {
+                self.sync_profile = value;
+                self.sync_dirty = true;
+                self.sync_initial_confirm = false;
+                self.sync_join_preview = None;
+            }
+            Message::SyncBucket(value) => {
+                self.sync_bucket = value;
+                self.sync_dirty = true;
+                self.sync_initial_confirm = false;
+                self.sync_join_preview = None;
+            }
+            Message::SyncRegion(value) => {
+                self.sync_region = value;
+                self.sync_dirty = true;
+                self.sync_initial_confirm = false;
+                self.sync_join_preview = None;
+            }
+            Message::SyncOwner(value) => {
+                self.sync_owner = value;
+                self.sync_dirty = true;
+                self.sync_initial_confirm = false;
+                self.sync_join_preview = None;
+            }
+            Message::SyncSave => {
+                return self.sync_run(SyncAction::Configure(SyncConfig {
+                    profile: self.sync_profile.clone(),
+                    bucket: self.sync_bucket.clone(),
+                    region: self.sync_region.clone(),
+                    owner: self.sync_owner.clone(),
+                }))
+            }
+            Message::SyncStatus => return self.sync_run(SyncAction::Status),
+            Message::SyncCheckConnection => return self.sync_run(SyncAction::CheckConnection),
+            Message::SyncInitial => {
+                self.sync_initial_confirm = true;
+                self.sync_join_preview = None;
+            }
+            Message::SyncConfirmInitial => {
+                if self.sync_initial_confirm
+                    && self.sync_configured
+                    && !self.sync_paired
+                    && !self.sync_dirty
+                {
+                    self.sync_initial_confirm = false;
+                    return self.sync_run(SyncAction::Initial);
+                }
+            }
+            Message::SyncPreviewJoin => return self.sync_run(SyncAction::PreviewJoin),
+            Message::SyncConfirmJoin => {
+                if let Some(preview) = self.sync_join_preview.take() {
+                    return self.sync_run(SyncAction::Join(preview));
+                }
+            }
+            Message::SyncCancel => {
+                self.sync_initial_confirm = false;
+                self.sync_join_preview = None;
+            }
+            Message::SyncPush => return self.sync_run(SyncAction::Push),
+            Message::SyncPull => return self.sync_run(SyncAction::Pull),
+            Message::SyncRecover => return self.sync_run(SyncAction::Recover),
         }
-        if !self.busy && self.form.is_none() && !self.restore_confirm && self.preview.is_none() {
+        if !self.busy
+            && self.form.is_none()
+            && !self.restore_confirm
+            && !self.sync_initial_confirm
+            && self.sync_join_preview.is_none()
+            && self.preview.is_none()
+        {
             if let Some(screen) = self.pending_screen.take() {
                 return self.update(Message::Navigate(screen));
             }
@@ -1068,10 +1248,31 @@ impl App {
         if self.busy {
             return Task::none();
         }
+        if modifiers.control()
+            && modifiers.shift()
+            && !modifiers.alt()
+            && !modifiers.logo()
+            && self.data.is_some()
+            && self.form.is_none()
+            && self.preview.is_none()
+            && !self.restore_confirm
+            && !self.sync_initial_confirm
+            && self.sync_join_preview.is_none()
+            && !self.sync_dirty
+        {
+            match key {
+                Key::Named(Named::ArrowUp) => return self.update(Message::SyncPush),
+                Key::Named(Named::ArrowDown) => return self.update(Message::SyncPull),
+                _ => {}
+            }
+        }
         if self.restore_confirm && key == Key::Named(Named::F8) {
             return self.update(Message::ConfirmRestore);
         }
         if key == Key::Named(Named::Escape) {
+            if self.sync_initial_confirm || self.sync_join_preview.is_some() {
+                return self.update(Message::SyncCancel);
+            }
             if self.restore_confirm {
                 return self.update(Message::CancelRestore);
             }

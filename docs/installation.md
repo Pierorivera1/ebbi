@@ -32,22 +32,24 @@ tar -czf "$build_dir/ebbi-0.1.0.tar.gz" \
 printf 'Package build directory: %s\n' "$build_dir"
 cd "$build_dir"
 makepkg --geninteg >> PKGBUILD
-makepkg
+makepkg --nocheck
 ```
 
 `--geninteg` records the checksum of your local snapshot before building; it does
 not authenticate the source checkout. `Cargo.lock` fixes dependency versions;
 compiler/system changes can still change the resulting binary. Inspect the package:
+The owner currently prohibits package check stages, so the recipe uses `--nocheck`.
+This does not run Rust tests or the package's `check()` function.
 
 ```bash
-pacman -Qip ./ebbi-0.1.0-2-x86_64.pkg.tar.zst
-pacman -Qlp ./ebbi-0.1.0-2-x86_64.pkg.tar.zst
+pacman -Qip ./ebbi-0.1.0-4-x86_64.pkg.tar.zst
+pacman -Qlp ./ebbi-0.1.0-4-x86_64.pkg.tar.zst
 ```
 
 When ready, install it explicitly with:
 
 ```bash
-sudo pacman -U ./ebbi-0.1.0-2-x86_64.pkg.tar.zst
+sudo pacman -U ./ebbi-0.1.0-4-x86_64.pkg.tar.zst
 ```
 
 The package owns `/usr/bin/ebbi`, `/usr/share/applications/ebbi.desktop` and its

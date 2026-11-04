@@ -1,5 +1,65 @@
 # Ebbi implementation status
 
+## Sync keyboard shortcuts, 2026-11-04
+
+Ctrl+Shift+Up invokes Push and Ctrl+Shift+Down invokes Pull through the existing sync worker and conflict checks. The shortcuts require an available workspace and are ignored while another operation, form, import preview, restore or pairing confirmation, or unsaved sync settings are active. Text inputs can capture their normal selection shortcuts. The shortcuts are documented in Settings and the usage guide.
+
+Formatting, an offline locked debug build with one Cargo job and a 50% CPU quota, and `git diff --check` passed. Rust tests were not run. The shortcuts have not yet been verified in a native window or installed on both devices.
+
+## Two-device sync live validation, 2026-11-04
+
+The owner installed `ebbi 0.1.0-3` on both Omarchy devices. The desktop launcher initially selected an older `~/.local/bin/ebbi`; the owner preserved that executable in a separate directory and replaced it with a symlink to `/usr/bin/ebbi`, then confirmed that the normal launcher showed the updated sync controls. The owner made verified backups on both devices, published the laptop workspace, previewed and joined it on the desktop, and confirmed the laptop's tasks, habits and study topic appeared there.
+
+A desktop-created check task was pushed to S3. A laptop Pull correctly refused to overwrite unpublished local habit changes, which the owner identified as checking then unchecking habits. The owner saved a verified conflict backup, explicitly restored the pre-publication snapshot and confirmed the laptop was clean before pulling. The desktop task then appeared on the laptop. A laptop-created check task was pushed and appeared after a desktop Pull. The owner deleted both check tasks on the desktop, pushed and successfully pulled the deletion on the laptop. Both directions and the conflict refusal are owner-reported live results; no production database was inspected by the agent. The desktop's separately identified pre-join backup remains preserved, but ordinary same-workspace graphical restore cannot directly apply it.
+
+The release was built with one Cargo job and a 50% CPU quota, without Rust tests or the package check stage. Synthetic and local mock exercises are recorded below. Actual hardware power loss, real simultaneous publication, each data type in a live two-way transfer, Rust 1.89 compatibility and automatic conflict merging remain unverified or unsupported. The feature requires manual Push/Pull, and S3 object versions and snapshots accumulate storage.
+
+## Two-device sync laptop package installation, 2026-11-04
+
+After the owner confirmed that the verified laptop backup was saved and the existing Ebbi window was closed, installed the prepared local `ebbi 0.1.0-3` package with `pkexec pacman -U`. Pacman completed successfully. `pacman -Q ebbi` reports `0.1.0-3`, and the installed binary matches the previously inspected package binary. The source package checksum and synthetic launch are recorded below. No Rust tests were run. Real sync configuration, first publication, desktop installation and real two-way validation remain pending.
+
+## Two-device sync package preparation, 2026-11-04
+
+The owner confirmed a verified laptop backup at `/home/pierooo/Documents/ebbi-backup-before-sync.db`. Built local Arch package `ebbi 0.1.0-3` from a source archive with `makepkg --nocheck`; no Rust tests or package `check()` stage ran. The first build was stopped at the owner's request due to CPU heat. It resumed using one Cargo job inside a systemd user scope capped at 50% of one logical CPU, reusing the extracted build tree. The finished package was copied to `/home/pierooo/Downloads/ebbi-sync.STd3OusG/ebbi-0.1.0-3-x86_64.pkg.tar.zst` with SHA-256 `a367d9d00aa3535b405a74f1cd78978306fe7ef11d92d32ab90e33e022c246d0`. It is unsigned and was built locally, not in a clean chroot.
+
+Read-only package inspection confirmed the expected binary, desktop entry, icon and licenses. The extracted binary reported its version, passed desktop entry validation and had no missing shared libraries on the laptop. A native Wayland launch with an isolated synthetic database opened Settings and showed sync controls; closing it exited the process. No real sync, package installation, desktop PC validation or UI click-through was performed at this checkpoint. The source archive was produced before the later documentation-only clarification of the `--nocheck` command; packaged application code matches the build snapshot.
+
+## Two-device sync pairing and controls, 2026-11-04
+
+The owner selected the laptop as the starting workspace. Settings now exposes a named profile, bucket, region and expected account ID, connection check, local change status, last recorded sync, first publication, preview/confirmed join, Push, Pull and interrupted-operation recovery. Settings and sync state are local to each database path and exclude AWS keys. The UI clears stale state after sync operations that may replace the database. Sync runs on the existing database worker.
+
+First publication requires an empty cloud head and preserves a verified local backup. Join downloads and validates the cloud snapshot for a preview with record counts; confirmation rechecks the cloud head and local content, then uses an explicitly identified join restore and retains a verified pre-join backup. The pending-operation record supports interruption before and after replacement. A differently identified pre-join backup is retained but cannot be directly restored through the ordinary same-workspace graphical restore. Conflict resolution remains manual and no automatic merge or force-overwrite control was added.
+
+Verification: temporary standalone examples used two synthetic workspaces, two database workers and the AWS SDK against a local HTTP S3-like server with fake credentials. First publication, duplicate-publication refusal, local and cloud preview changes, joining, retained previous workspace, later Push and Pull, and refusal to change paired settings were exercised. Modeled restart checks covered join before replacement, after replacement and with unexpected local edits. A synthetic native Wayland Settings screen was inspected at 600 logical pixels wide; the UI buttons were not clicked through. `cargo fmt --all -- --check`, `cargo build --offline --locked` and `git diff --check` passed. Rust tests were not created or run. The real S3 bucket, personal databases and installed apps were not modified. Real-device pairing, actual process/hardware failure and Rust 1.89 remain unverified and are step 6 work.
+
+## Two-device sync worker integration, 2026-11-04
+
+The existing database worker now accepts internal Push, Pull and pending-recovery requests for an already paired workspace. It loads device-local state and runs the S3 client on a worker-owned Tokio runtime, serialized with database writes. At that checkpoint these operations were not yet exposed by the app UI; see the newer entry above. The UI must clear stale selections and cached data after every sync result, including errors, because recovery or a pull can have replaced the database.
+
+Pending-upload recovery now recognizes both a competing immediate child of the accepted revision and an immediate cloud successor to the pending revision. The first reports a conflict without marking the local edit published. The second records the published revision and lets normal conflict checks handle the newer cloud head. If the available head does not establish the outcome, the pending state remains and sync pauses for investigation. No automatic merge or force overwrite was added.
+
+Verification: a temporary standalone example sent requests through two real database workers and the AWS SDK against a local HTTP S3-like server with fake credentials. Synthetic tasks, binary and numeric habits, study notes and completed reviews survived transfer. Stale Push and Pull with unpublished changes were refused; a missing configuration error did not stop the worker. A separate in-memory exercise covered competing publication, a successor to the pending revision and unknown ancestry. Formatting, offline locked build and `git diff --check` passed. Rust tests were not created or run. Temporary examples were removed; personal databases, real AWS and the installed app were not touched. Real-device behavior, actual process or hardware failure, import and migration changes, and the declared Rust 1.89 toolchain remain unverified.
+
+## Two-device sync transport and engine, 2026-11-04
+
+Implemented an S3 transport and sync engine for already paired workspaces. The AWS SDK explicitly loads the configured profile, limits request duration and transfer size, checks the expected bucket owner, downloads and verifies snapshots, and uses conditional object and head writes. The engine refuses stale-cloud pushes and pulls that would overwrite unpublished local changes. It persists a pending operation before publishing or replacing local data, rechecks uncertain publication outcomes, validates downloaded snapshots and uses the existing restore/recovery path. The SDK dependencies are locked to versions resolved against the stated Rust 1.89 minimum; the build was performed with Rust 1.99.1, so 1.89 itself was not verified.
+
+At that checkpoint the code was not connected to the app worker, settings or pairing flow; see the newer entry above. First publication and joining a workspace remain step 5. A previous publication whose cloud history moved past the pending revision is paused for manual investigation; a resolution interface is not implemented. Do not use these library primitives on personal data yet.
+
+Verification: `cargo fmt --all -- --check`, `cargo build --offline --locked` and `git diff --check` passed. Temporary standalone examples used synthetic databases and an in-memory transport to exercise a lost publication response, corrupt download, recovery of an interrupted pre-replacement pull, successful push/pull, stale push and refusal to replace unpublished edits. A local HTTP S3-like server using fake credentials exercised the AWS SDK, object upload/download, conditional creation and replacement, stale ETag refusal, checksum rejection and an HTTP 403. No real AWS request was made by the agent. Real AWS transfers through the application, actual process or hardware failure, all task/habit/study data categories and Rust 1.89 remain unverified. A modeled restart after replacement recovered the pending pull state. Two concurrent conditional publications against the local HTTP mock produced one success and one rejection; concurrent behavior against AWS itself remains unverified. No Rust tests were created or run. Temporary example sources were removed after the exercises; the installed package and personal databases were not changed.
+
+## Two-device sync local foundation, 2026-11-04
+
+The owner created the private versioned S3 bucket, two IAM users and separate named profiles. The owner reported successful synthetic transfers in both directions. At that checkpoint the application had no S3 transport, pairing, sync controls or automatic sync-state integration. See the newer entry above.
+
+The local sync module now supports validated SQLite backup snapshots, byte checksums, logical fingerprints over the schema and table contents, and atomic device-local revision/configuration state without credentials. Comparing a snapshot with the accepted revision detects content and workspace changes without changing the database. It uses the existing SQLite backup API, including WAL content. Snapshot and inspection operations must run on the database worker when integrated. The local state is not yet wired to the application, and cloud publication and interruption recovery are still step 4 work. AWS SDK selection is deferred until S3 transport is implemented.
+
+Verification: `cargo fmt --all -- --check` and `cargo build --offline --locked` passed. A temporary standalone example used a synthetic workspace: initial state was unpaired, saved state survived reopening, adding a task reported changed, and restoring the initial snapshot reported unchanged. No Rust tests were created or run. Personal and legacy databases were not opened. The installed package was not updated. Hardware failures, concurrent publication, imports and migrations have not been exercised for sync.
+
+## Two-device sync guide, 2026-11-03
+
+The first sync roadmap step is complete: `AWS_SETUP.md` explains the owner's manual S3 and IAM setup, separate device credentials and synthetic transfers in both directions. `EBBI_SYNC_ROADMAP.md` records the proposed implementation and data-safety checks. At that checkpoint AWS resources had not yet been created or verified. See the newer entry above for subsequent setup and implementation. Rust tests remain prohibited and were not run.
+
 ## Study date-filter label removed, 2026-11-03
 
 Removed the Viewing date message and Show all button. Click the selected day again or press Esc to clear the date filter. The release build succeeded and the updated package was installed. No tests were run.

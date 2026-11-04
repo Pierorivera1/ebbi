@@ -432,6 +432,23 @@ impl Database {
     pub fn backup(&self, target: &Path) -> Result<()> {
         backup_connection(&self.conn, target)
     }
+    /// Create a consistent, validated snapshot for the sync worker to inspect.
+    pub fn sync_snapshot(&self, target: &Path) -> Result<crate::sync::SnapshotInfo> {
+        self.backup(target)?;
+        match crate::sync::inspect_snapshot(target) {
+            Ok(info) => Ok(info),
+            Err(error) => {
+                let _ = fs::remove_file(target);
+                Err(error)
+            }
+        }
+    }
+    /// Retain a verified backup before the first sync publication.
+    pub fn sync_recovery_backup(&self) -> Result<PathBuf> {
+        let target = unique_path(&self.path, "pre-sync-pairing");
+        self.sync_snapshot(&target)?;
+        Ok(target)
+    }
     pub fn backup_if_due(&mut self, today: NaiveDate) -> Result<()> {
         if !self.dirty && self.backup_date == Some(today) {
             return Ok(());
@@ -558,10 +575,10 @@ fn reorder(tx: &Connection, table: &str, id: i64, delta: i64) -> Result<()> {
     }
     Ok(())
 }
-pub(super) fn readonly(path: &Path) -> Result<Connection> {
+pub(crate) fn readonly(path: &Path) -> Result<Connection> {
     Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(err)
 }
-pub(super) fn validate(conn: &Connection) -> Result<()> {
+pub(crate) fn validate(conn: &Connection) -> Result<()> {
     let integrity: String = conn
         .query_row("PRAGMA integrity_check", [], |r| r.get(0))
         .map_err(err)?;

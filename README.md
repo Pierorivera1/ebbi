@@ -31,6 +31,7 @@ The project combines the workflows of [Habit Tracker](https://github.com/Pierori
 - **Useful analytics:** 7/30/90-day trends, consistency, current and longest streaks, numeric values against targets, complete-period comparisons, and study completion and on-time metrics.
 - **History preservation:** archiving retains habit records; rescheduling preserves original review deadlines and records the change. Missing values and unknown legacy dates remain distinct from zero or failure.
 - **Local data tools:** previewed imports from Habit Tracker and Repasito, transactional schema migrations, verified backups, and explicit storage errors.
+- **Optional two-device sync:** manually push and pull SQLite snapshots through your own S3 bucket, with conflict checks and recovery backups.
 - **Keyboard navigation:** view shortcuts, row selection, date navigation, and form controls alongside mouse interactions.
 
 ## Screenshots
@@ -106,6 +107,9 @@ instance.
 | `Enter` | Edit the selected item or save a form |
 | `Esc` | Cancel a form, then clear Study search or the selected date |
 | `PageUp` / `PageDown` | Scroll the main view |
+| `Ctrl+Shift+Up` / `Ctrl+Shift+Down` | Push / pull sync changes |
+
+The sync shortcuts require a focused Ebbi window and use the same checks as the Settings buttons. Finish or cancel open forms and confirmations first; a focused text field may use the arrow keys for selection.
 
 See the [user guide](docs/usage.md) for habit creation, task controls, review rescheduling, imports, and recovery instructions.
 
@@ -201,6 +205,14 @@ Import and recovery details are in the [user guide](docs/usage.md#import). Origi
 Archiving a habit keeps its history; confirming deletion removes the habit and its
 binary and numeric history. Create a backup before deleting data you may need.
 
+### Manual sync between two devices
+
+Sync is optional. Configure a private S3 bucket and a named AWS profile on each device using the [AWS setup guide](AWS_SETUP.md). In **Settings → Sync between devices**, save the profile name, bucket, region, and expected AWS account ID, then check the connection. AWS keys remain in the local profile, not in Ebbi's sync settings.
+
+Choose the device with the starting data and confirm **Publish starting workspace**. The cloud workspace must be empty, and Ebbi saves a verified local backup. On the second device, preview and confirm **Join cloud workspace**. Joining replaces that device's local workspace with the cloud copy, retains a verified pre-join backup, and does not merge data. A backup from a different workspace cannot be directly restored using the ordinary graphical restore.
+
+After pairing, pull before editing on the other device and push before switching devices. Push is refused if the cloud changed since the last accepted revision; pull is refused if local changes have not been published. Resolve conflicts manually, preserving backups first. Settings also offers recovery for an interrupted sync. Snapshots and S3 object versions accumulate storage; sync is not automatic.
+
 ## Development
 
 The owner has prohibited running Rust tests and commands that invoke them until explicitly lifting the restriction. The commands below include tests for future use; do not run them while the restriction remains in effect.
@@ -218,7 +230,7 @@ Tests focus on observable behavior and data integrity: transactional rollback, i
 
 The dashboard, Study, numeric tracking, analytics, imports, and backups are implemented. Local Arch packaging, desktop launchers, and a synthetic sample generator are available. Single-instance view routing and graphical backup restore are implemented. The package is built locally; release automation and formal startup and resource-use benchmarks remain outstanding.
 
-Review scheduling uses fixed checkpoints; adaptive repetition, non-daily habit schedules, and cloud sync are outside the current scope.
+Review scheduling uses fixed checkpoints; adaptive repetition and non-daily habit schedules are outside the current scope. Manual S3 sync is implemented; automatic conflict merging is not supported.
 
 ## License
 

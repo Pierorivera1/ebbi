@@ -1,3 +1,4 @@
+use crate::sync_worker::{self, SyncReport, SyncRequest};
 use chrono::NaiveDate;
 use ebbi::domain::{Action, AnalyticsReport, ImportPreview, LegacyKind, Snapshot};
 use ebbi::persistence::Database;
@@ -14,6 +15,8 @@ pub enum Operation {
     Import(ImportPreview),
     Backup(PathBuf),
     Restore(PathBuf),
+    // Sync recovery or join can replace the database before reporting an error.
+    Sync(SyncRequest),
 }
 
 #[derive(Debug, Clone)]
@@ -22,6 +25,7 @@ pub struct Reply {
     pub analytics: Option<Result<AnalyticsReport, String>>,
     pub preview: Option<ImportPreview>,
     pub notice: Option<String>,
+    pub sync: Option<SyncReport>,
 }
 
 struct Request {
@@ -45,6 +49,29 @@ impl Worker {
                 if matches!(request.operation, Operation::Retry) {
                     drop(database);
                     database = Database::open(&path);
+                }
+                if let Operation::Sync(sync_request) = &request.operation {
+                    let current = std::mem::replace(&mut database, Err("Sync in progress".into()));
+                    let reply = match current {
+                        Ok(db) => {
+                            let (reopened, outcome) = sync_worker::run(db, sync_request);
+                            database = reopened;
+                            outcome.and_then(|outcome| {
+                                let db = database.as_mut().map_err(|e| e.clone())?;
+                                let mut reply =
+                                    execute(db, Operation::Refresh, request.date, request.today)?;
+                                reply.notice = outcome.notice.clone();
+                                reply.sync = Some(outcome);
+                                Ok(reply)
+                            })
+                        }
+                        Err(error) => {
+                            database = Err(error.clone());
+                            Err(error)
+                        }
+                    };
+                    let _ = request.result.send(reply);
+                    continue;
                 }
                 if let Operation::Restore(source) = &request.operation {
                     let current =
@@ -140,7 +167,9 @@ fn execute(
     let mut notice = None;
     let changed = matches!(operation, Operation::Apply(_) | Operation::Import(_));
     match operation {
-        Operation::Restore(_) => return Err("Restore must run through the worker lifecycle".into()),
+        Operation::Restore(_) | Operation::Sync(_) => {
+            return Err("Restore and sync must run through the worker lifecycle".into())
+        }
         Operation::Refresh | Operation::Retry => {}
         Operation::Analytics(days) => {
             analytics = Some(db.analytics(date, days, today));
@@ -168,6 +197,7 @@ fn execute(
         analytics,
         preview,
         notice,
+        sync: None,
     })
 }
 

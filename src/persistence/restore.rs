@@ -54,6 +54,23 @@ fn identity(conn: &Connection) -> Result<String> {
 impl Database {
     /// Returns a reopened database even when restore fails. Recovery snapshots are permanent.
     pub fn restore(self, source: &Path) -> (Result<Self>, Result<PathBuf>) {
+        self.restore_inner(source, None)
+    }
+
+    /// Join a confirmed cloud workspace after the caller validates its identity and content.
+    pub fn restore_join(
+        self,
+        source: &Path,
+        workspace_id: &str,
+    ) -> (Result<Self>, Result<PathBuf>) {
+        self.restore_inner(source, Some(workspace_id))
+    }
+
+    fn restore_inner(
+        self,
+        source: &Path,
+        joining: Option<&str>,
+    ) -> (Result<Self>, Result<PathBuf>) {
         let pending = unique_path(&self.path, "restore-pending");
         let candidate = unique_path(&self.path, "restore-candidate");
         let recovery = unique_path(&self.path, "pre-restore");
@@ -90,7 +107,11 @@ impl Database {
             let version: i64 = raw
                 .pragma_query_value(None, "user_version", |r| r.get(0))
                 .map_err(err)?;
-            if !(1..=2).contains(&version) || identity(&raw)? != identity(&self.conn)? {
+            let expected_identity = match joining {
+                Some(id) => id.to_owned(),
+                None => identity(&self.conn)?,
+            };
+            if !(1..=2).contains(&version) || identity(&raw)? != expected_identity {
                 return Err(
                     "Restore source is not a supported backup of this Ebbi database".into(),
                 );

@@ -27,6 +27,7 @@ Default storage: `$XDG_DATA_HOME/ebbi/ebbi.db`, falling back to `~/.local/share/
 - With a habit selected, `d` opens “Do you want to delete a habit?” with Yes/No buttons and the habit name. Yes (or `y`) deletes the habit and its tracking history; No (`n`) or Esc cancels.
 - In Settings, Tab reaches path fields, Enter submits the current path, F5/F6 choose Habit Tracker/Repasito, and F8 confirms a visible import preview. Esc cancels a preview or returns to Dashboard.
 - In forms, Tab/Shift-Tab move between fields, Enter in title/due saves, and Esc cancels. Notes support multiple lines. Text inputs retain their normal editing behavior.
+- With the Ebbi window focused, Ctrl+Shift+Up pushes changes and Ctrl+Shift+Down pulls changes. These use the same conflict checks as the Settings buttons. Finish editing or cancel any open form or confirmation first; a focused text field may use the arrow keys for text selection instead.
 - Archive/restore takes effect tomorrow. Past completions remain available. Future completions and dates before tracking began are disabled.
 - Tasks appear in their saved order. Completed tasks disappear from the list six hours after completion; their records stay saved. Legacy tasks without a known completion timestamp remain visible.
 - Closing the window ends the app. Nothing starts at login or remains as a notification service in this build.

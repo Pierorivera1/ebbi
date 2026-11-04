@@ -3,6 +3,7 @@ mod app;
 mod charts;
 mod instance;
 mod study_ui;
+mod sync_worker;
 mod ui;
 mod worker;
 

@@ -1,7 +1,7 @@
 # Local checkout recipe; see docs/installation.md for source snapshot creation.
 pkgname=ebbi
 pkgver=0.1.0
-pkgrel=2
+pkgrel=4
 pkgdesc='Local-first habits, tasks and study planner'
 arch=('x86_64')
 url='https://github.com/Pierorivera1/ebbi'
