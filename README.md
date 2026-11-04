@@ -11,17 +11,27 @@ Built with Rust · Designed for daily use · Stored locally in SQLite
 ![Database](https://img.shields.io/badge/Storage-SQLite-003B57?logo=sqlite&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black)
 
-[Features](#features) · [Getting started](#getting-started) · [Architecture](#architecture) · [User guide](docs/usage.md)
+[Architecture](#architecture) · [Features](#features) · [Getting started](#getting-started) · [User guide](docs/usage.md)
 
 </div>
-
-![Ebbi dashboard showing daily habits, numeric progress, tasks, and a study review summary](docs/screenshots/dashboard.png)
 
 ## Overview
 
 Ebbi brings recurring habits, everyday tasks, and spaced repetition into a single desktop application. Check in on a habit, record minutes spent studying, work through a review agenda, and see how your consistency changes over time.
 
 The project combines the workflows of [Habit Tracker](https://github.com/Pierorivera1/Habit_Tracker) and [Repasito](https://github.com/Pierorivera1/Repasito) in a Rust application. Its engineering focus is straightforward: keep the interface responsive, preserve historical meaning, and make database failures visible. Core functionality works offline, without an account, server, or background service.
+
+## Architecture
+
+![Ebbi architecture: two offline SQLite workspaces exchange snapshots manually through a private S3 bucket](docs/screenshots/architecture.png)
+
+Each device saves to its own SQLite database. Optional sync uses the AWS SDK on the database worker, serialized with local writes. Devices communicate through S3; neither device needs to remain on for the other to pull an already published snapshot.
+
+The bucket holds immutable `ebbi/snapshots/<revision>.db` objects and `ebbi/head.json`, which identifies the accepted revision and its snapshot. Push uploads a verified snapshot, then conditionally updates the head using its previously accepted ETag. First publication requires an absent head. This head update is the cloud commit point; bucket versioning alone does not prevent conflicts.
+
+Pull verifies snapshot checksums, workspace identity and schema before using the validated replacement and recovery-backup path. Device-local sync state records the accepted revision and pending transfers separately from the shared database. Uncertain interrupted operations pause sync for recovery rather than assuming publication succeeded. Named AWS profile credentials remain on each device; requests check the configured expected bucket owner.
+
+Core workflows require no cloud access. Sync is explicitly manual, transfers whole snapshots, and provides no row-level or automatic conflict merge. No API server, EC2 instance, or resident sync daemon is required. See the [architecture and lessons](EBBI_ARCHITECTURE_AND_LESSONS.md) for the design decisions, recovery behavior, and verification limits.
 
 ## Features
 
@@ -37,6 +47,10 @@ The project combines the workflows of [Habit Tracker](https://github.com/Pierori
 ## Screenshots
 
 Captured from an earlier version of the native app on Omarchy / Wayland. The Study layout has since changed. All names, tasks, and history shown here are synthetic demonstration data.
+
+### Dashboard
+
+![Ebbi dashboard showing daily habits, numeric progress, tasks, and a study review summary](docs/screenshots/dashboard.png)
 
 ### Study agenda
 
@@ -113,23 +127,7 @@ The sync shortcuts require a focused Ebbi window and use the same checks as the 
 
 See the [user guide](docs/usage.md) for habit creation, task controls, review rescheduling, imports, and recovery instructions.
 
-## Architecture
-
-Ebbi separates presentation, application state, domain rules, and SQLite persistence. One worker thread owns the database connection and serializes storage operations; UI updates receive results asynchronously.
-
-```mermaid
-flowchart TD
-    User[Keyboard and mouse] --> UI[Views and charts]
-    UI --> App[Application state and messages]
-    App -->|Operation through mpsc| Worker[Dedicated database worker]
-    Worker --> DB[Persistence layer]
-    DB --> SQLite[(SQLite database)]
-    DB --> Analytics[Pure analytics functions]
-    Worker -->|Reply through oneshot| App
-    App -->|Updated state| UI
-    DB --> Backups[Verified SQLite snapshots]
-    Legacy[Legacy database snapshots] --> DB
-```
+## Application internals
 
 ### Project structure
 
@@ -144,6 +142,8 @@ src/
 ├── domain.rs               # Domain types and action/report contracts
 ├── analytics.rs            # Pure scheduling and analytics calculations
 ├── worker.rs               # Requests, replies, and database thread lifecycle
+├── sync/                   # Snapshot protocol, conflict engine, and S3 transport
+├── sync_worker.rs          # Device-local settings and worker sync integration
 ├── instance.rs             # Single-instance locking and view routing
 └── persistence/
     ├── mod.rs              # Connection, transactions, snapshots, and backups
