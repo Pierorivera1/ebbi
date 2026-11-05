@@ -31,7 +31,7 @@ The bucket holds immutable `ebbi/snapshots/<revision>.db` objects and `ebbi/head
 
 Pull verifies snapshot checksums, workspace identity and schema before using the validated replacement and recovery-backup path. Device-local sync state records the accepted revision and pending transfers separately from the shared database. Uncertain interrupted operations pause sync for recovery rather than assuming publication succeeded. Named AWS profile credentials remain on each device; requests check the configured expected bucket owner.
 
-Core workflows require no cloud access. Sync is explicitly manual, transfers whole snapshots, and provides no row-level or automatic conflict merge. No API server, EC2 instance, or resident sync daemon is required. See the [architecture and lessons](EBBI_ARCHITECTURE_AND_LESSONS.md) for the design decisions, recovery behavior, and verification limits.
+Core workflows require no cloud access. Sync is explicitly manual, transfers whole snapshots, and provides no row-level or automatic conflict merge. No API server, EC2 instance, or resident sync daemon is required.
 
 ## Features
 
@@ -207,7 +207,7 @@ binary and numeric history. Create a backup before deleting data you may need.
 
 ### Manual sync between two devices
 
-Sync is optional. Configure a private S3 bucket and a named AWS profile on each device using the [AWS setup guide](AWS_SETUP.md). In **Settings → Sync between devices**, save the profile name, bucket, region, and expected AWS account ID, then check the connection. AWS keys remain in the local profile, not in Ebbi's sync settings.
+Sync is optional. Configure a private S3 bucket and a named AWS profile on each device. The profile needs permission to get the bucket location, list the bucket, and read and write objects under the `ebbi/` prefix. In **Settings → Sync between devices**, save the profile name, bucket, region, and expected AWS account ID, then check the connection. AWS keys remain in the local profile, not in Ebbi's sync settings.
 
 Choose the device with the starting data and confirm **Publish starting workspace**. The cloud workspace must be empty, and Ebbi saves a verified local backup. On the second device, preview and confirm **Join cloud workspace**. Joining replaces that device's local workspace with the cloud copy, retains a verified pre-join backup, and does not merge data. A backup from a different workspace cannot be directly restored using the ordinary graphical restore.
 

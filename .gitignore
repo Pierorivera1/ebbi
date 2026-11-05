@@ -2,3 +2,10 @@
 *.db
 *.db-wal
 *.db-shm
+
+/productivity_codex/
+/EBBI_ARCHITECTURE_AND_LESSONS.md
+/EBBI_SYNC_ROADMAP.md
+/IMPLEMENTATION_STATUS.md
+/AGENTS.md
+/AWS_SETUP.md
